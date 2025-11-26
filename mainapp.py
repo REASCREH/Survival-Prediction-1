@@ -90,7 +90,19 @@ def find_model_files():
     
     return found_models
 
-# Feature information - updated to match actual model features
+# All 35 categorical columns from your training
+CATEGORICAL_COLUMNS = [
+    'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'tbi_status',
+    'arrhythmia', 'graft_type', 'vent_hist', 'renal_issue', 'pulm_severe',
+    'prim_disease_hct', 'cmv_status', 'tce_imm_match', 'rituximab',
+    'prod_type', 'cyto_score_detail', 'conditioning_intensity', 'ethnicity',
+    'obesity', 'mrd_hct', 'in_vivo_tcd', 'tce_match', 'hepatic_severe',
+    'prior_tumor', 'peptic_ulcer', 'gvhd_proph', 'rheum_issue', 'sex_match',
+    'race_group', 'hepatic_mild', 'tce_div_match', 'donor_related',
+    'melphalan_dose', 'cardiac', 'pulm_moderate'
+]
+
+# Feature information - updated with all categorical variables
 FEATURE_INFO = {
     "dri_score": {
         "description": "Disease Risk Index - categorizes patient risk based on underlying disease",
@@ -168,6 +180,13 @@ FEATURE_INFO = {
         "options": ["No TBI", "TBI +- Other, >cGy", "Unknown"],
         "importance": "Medium",
         "example": "No TBI (no radiation therapy)"
+    },
+    "arrhythmia": {
+        "description": "Presence of heart rhythm disorders",
+        "type": "categorical",
+        "options": ["Yes", "No", "Unknown"],
+        "importance": "Medium",
+        "example": "No (no arrhythmia)"
     }
 }
 
@@ -228,7 +247,7 @@ def load_models():
         return None, None, None
 
 def create_empty_feature_dataframe():
-    """Create a DataFrame with all expected features set to 0"""
+    """Create a DataFrame with ALL expected features set to 0"""
     # Basic numerical features
     basic_features = [
         'age_at_hct', 'karnofsky_score', 'comorbidity_score', 'hla_match_total', 
@@ -251,16 +270,17 @@ def create_empty_feature_dataframe():
         'hla_match_count', 'hla_match_std', 'hla_high_res_log', 'hla_high_res_squared'
     ]
     
-    # Word2Vec features for categorical variables (40 dimensions each)
-    categorical_columns = ['dri_score', 'psych_disturb', 'diabetes', 'tbi_status',
-                          'arrhythmia', 'graft_type', 'cardiac']
+    # DRI score indicator
+    dri_features = ['dri_score_NA']
     
+    # Word2Vec features for ALL 35 categorical variables (40 dimensions each)
     w2v_features = []
-    for col in categorical_columns:
+    for col in CATEGORICAL_COLUMNS:
         w2v_features.extend([f"{col}_w2v_{i}" for i in range(40)])
     
     # Combine all features
-    expected_features = basic_features + hla_features + derived_features + w2v_features
+    expected_features = (basic_features + hla_features + derived_features + 
+                        dri_features + w2v_features)
     
     # Create DataFrame with all expected features set to 0
     feature_dict = {feature: 0.0 for feature in expected_features}
@@ -333,8 +353,12 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     df['hla_high_res_log'] = np.log(df['hla_high_res_sum'] + 1.0)
     df['hla_high_res_squared'] = df['hla_high_res_sum'] ** 2
     
-    # Handle categorical variables using Word2Vec encoding
-    categorical_mappings = {
+    # Set DRI score indicator
+    df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
+    
+    # Handle ALL 35 categorical variables using Word2Vec encoding
+    # For variables provided by user, use their values
+    user_provided_categoricals = {
         'dri_score': input_data['dri_score'],
         'psych_disturb': input_data['psych_disturb'],
         'diabetes': input_data['diabetes'],
@@ -344,7 +368,42 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         'cardiac': input_data['cardiac']
     }
     
-    for col_name, value in categorical_mappings.items():
+    # For variables not provided by user, set to "Unknown" (as in training)
+    default_categoricals = {
+        'cyto_score': "Unknown",
+        'vent_hist': "Unknown", 
+        'renal_issue': "Unknown",
+        'pulm_severe': "Unknown",
+        'prim_disease_hct': "Unknown",
+        'cmv_status': "Unknown",
+        'tce_imm_match': "Unknown",
+        'rituximab': "Unknown",
+        'prod_type': "Unknown",
+        'cyto_score_detail': "Unknown",
+        'conditioning_intensity': "Unknown",
+        'ethnicity': "Unknown",
+        'obesity': "Unknown",
+        'mrd_hct': "Unknown",
+        'in_vivo_tcd': "Unknown",
+        'tce_match': "Unknown",
+        'hepatic_severe': "Unknown",
+        'prior_tumor': "Unknown",
+        'peptic_ulcer': "Unknown",
+        'gvhd_proph': "Unknown",
+        'rheum_issue': "Unknown",
+        'sex_match': "Unknown",
+        'race_group': "Unknown",
+        'hepatic_mild': "Unknown",
+        'tce_div_match': "Unknown",
+        'donor_related': "Unknown",
+        'melphalan_dose': "Unknown",
+        'pulm_moderate': "Unknown"
+    }
+    
+    # Combine user provided and default categoricals
+    all_categoricals = {**default_categoricals, **user_provided_categoricals}
+    
+    for col_name, value in all_categoricals.items():
         # Get Word2Vec embedding
         embedding = get_w2v_embedding(str(value), w2v_model, vector_size=40)
         
@@ -360,7 +419,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         df[col] = df[col].astype(float)
     
     logger.info(f"Processed data shape: {df.shape}")
-    logger.info(f"Sample features: {dict(list(df.iloc[0].items())[:10])}")
+    logger.info(f"Total features: {len(df.columns)}")
     
     return df
 
@@ -406,7 +465,7 @@ def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Di
     return contributions
 
 def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_model) -> Dict:
-    """Make prediction using ensemble model (XGBoost and CatBoost only)"""
+    """Make prediction using ensemble model"""
     
     try:
         # Preprocess features
@@ -525,8 +584,13 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
             try:
                 processed_data = preprocess_features(patient_data, w2v_model)
                 st.write("Processed data shape:", processed_data.shape)
-                st.write("Processed data columns sample:", list(processed_data.columns)[:20])
-                st.write("Processed data sample values:", processed_data.iloc[0].head(10).to_dict())
+                st.write("Total features processed:", len(processed_data.columns))
+                
+                # Check if we have all expected features
+                if xgb_model and hasattr(xgb_model, 'get_booster'):
+                    expected_features = xgb_model.get_booster().feature_names
+                    st.write("Expected features count:", len(expected_features))
+                    st.write("Missing features:", set(expected_features) - set(processed_data.columns))
             except Exception as debug_e:
                 st.write("Debug error:", debug_e)
         return None
@@ -583,9 +647,12 @@ def main():
         st.markdown("""
         This system predicts survival outcomes using:
         - **XGBoost** and **CatBoost** ensemble
-        - **Word2Vec** encoding for categorical variables
+        - **Word2Vec** encoding for 35 categorical variables
         - Nelson-Aalen cumulative hazard estimation
         - Clinical feature analysis
+        
+        **Note:** The model uses all 35 categorical variables from training.
+        Missing values are encoded as 'Unknown'.
         """)
     
     # Main form
