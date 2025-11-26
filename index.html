@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HCT Survival Prediction</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h1 { 
+            color: #2c3e50; 
+            text-align: center; 
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        .form-group { 
+            margin-bottom: 25px; 
+            padding: 15px;
+            border-radius: 10px;
+            background: #f8f9fa;
+            transition: all 0.3s ease;
+        }
+        .form-group:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+        }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 600; 
+            color: #2c3e50; 
+            font-size: 1.1em;
+        }
+        input, select { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #e9ecef; 
+            border-radius: 8px; 
+            font-size: 16px; 
+            transition: border-color 0.3s ease;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+        }
+        button { 
+            background: linear-gradient(135deg, #3498db, #2980b9); 
+            color: white; 
+            padding: 15px 40px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 18px; 
+            width: 100%; 
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        button:hover { 
+            background: linear-gradient(135deg, #2980b9, #3498db);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .feature-info { 
+            background: white; 
+            padding: 12px; 
+            border-radius: 8px; 
+            margin-bottom: 10px; 
+            border-left: 4px solid;
+            font-size: 0.9em;
+        }
+        .importance-high { border-left-color: #e74c3c; }
+        .importance-medium { border-left-color: #f39c12; }
+        .importance-low { border-left-color: #27ae60; }
+        .example {
+            color: #7f8c8d;
+            font-style: italic;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+        .feature-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+        }
+        .importance-badge {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .high-badge { background: #e74c3c; color: white; }
+        .medium-badge { background: #f39c12; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎗️ HCT Survival Prediction</h1>
+        <div class="subtitle">
+            Predict survival outcomes for Hematopoietic Cell Transplantation patients
+        </div>
+        
+        <form method="post" action="/predict">
+            {% for feature, info in feature_info.items() %}
+            <div class="form-group">
+                <label for="{{ feature }}">
+                    {{ feature | replace('_', ' ') | title }}
+                    <span class="importance-badge {{ info.importance.lower() }}-badge">
+                        {{ info.importance }} Importance
+                    </span>
+                </label>
+                
+                <div class="feature-info importance-{{ info.importance.lower() }}">
+                    <strong>📝 Description:</strong> {{ info.description }}<br>
+                    <strong>📊 Type:</strong> {{ info.type | title }}<br>
+                    {% if info.type == 'categorical' %}
+                    <strong>🔢 Options:</strong> {{ info.options | join(', ') }}
+                    {% else %}
+                    <strong>📈 Range:</strong> {{ info.range }}
+                    {% endif %}
+                    <div class="example">
+                        <strong>💡 Example:</strong> {{ info.example }}
+                    </div>
+                </div>
+                
+                {% if info.type == 'categorical' %}
+                <select id="{{ feature }}" name="{{ feature }}" required>
+                    <option value="">Select {{ feature | replace('_', ' ') }}</option>
+                    {% for option in info.options %}
+                    <option value="{{ option }}">{{ option }}</option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                <input type="number" id="{{ feature }}" name="{{ feature }}" step="any" 
+                       placeholder="Enter {{ info.description }}" 
+                       min="{% if 'age' in feature %}0{% elif 'karnofsky' in feature %}0{% else %}0{% endif %}"
+                       max="{% if 'age' in feature %}80{% elif 'karnofsky' in feature %}100{% elif 'comorbidity' in feature %}10{% elif 'hla' in feature %}20{% else %}100{% endif %}"
+                       required>
+                {% endif %}
+            </div>
+            {% endfor %}
+            
+            <button type="submit">🔮 Predict Survival Risk</button>
+        </form>
+        
+        <div style="margin-top: 30px; text-align: center; color: #7f8c8d;">
+            <small>This tool uses machine learning to predict survival outcomes based on clinical features. 
+            Always consult healthcare professionals for medical decisions.</small>
+        </div>
+    </div>
+</body>
+</html>
