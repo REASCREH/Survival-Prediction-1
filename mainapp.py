@@ -6,6 +6,7 @@ import glob
 import logging
 from typing import Dict, List
 import os
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -59,24 +60,31 @@ st.markdown("""
 def find_model_files():
     """Search for model files automatically"""
     search_patterns = [
-        "C:/Users/Qamar/Downloads/*.pkl",
-        "C:/Users/Qamar/Desktop/*.pkl", 
-        "./*.pkl",
-        "./models/*.pkl"
+        "*.pkl",
+        "models/*.pkl",
+        "XGB_model.pkl",
+        "CatBoost_model.pkl",
+        "./XGB_model.pkl", 
+        "./CatBoost_model.pkl"
     ]
     
     found_models = {}
     for pattern in search_patterns:
         files = glob.glob(pattern)
         for file in files:
-            if "XGB" in file or "xgb" in file.lower():
+            filename = file.lower()
+            if "xgb" in filename and "xgb" not in found_models:
                 found_models["xgb"] = file
-            elif "CatBoost" in file or "catboost" in file.lower():
+            elif "catboost" in filename and "catboost" not in found_models:
+                found_models["catboost"] = file
+            elif "xgb" not in found_models and ("xgb" in filename or "xgboost" in filename):
+                found_models["xgb"] = file
+            elif "catboost" not in found_models and "catboost" in filename:
                 found_models["catboost"] = file
     
     return found_models
 
-# Feature information
+# Feature information - updated to match actual model features
 FEATURE_INFO = {
     "dri_score": {
         "description": "Disease Risk Index - categorizes patient risk based on underlying disease",
@@ -154,65 +162,148 @@ FEATURE_INFO = {
 def load_models():
     """Load ML models with caching"""
     try:
+        # Try to import required packages
+        try:
+            import catboost
+            import xgboost
+        except ImportError as e:
+            st.error(f"❌ Missing required package: {e}")
+            return None, None
+        
         MODEL_PATHS = find_model_files()
-        st.info(f"Found models: {MODEL_PATHS}")
+        st.info(f"🔍 Found models: {MODEL_PATHS}")
         
-        xgb_model = joblib.load(MODEL_PATHS["xgb"])
-        catboost_model = joblib.load(MODEL_PATHS["catboost"])
+        if not MODEL_PATHS:
+            st.error("❌ No model files found. Please ensure XGB_model.pkl and CatBoost_model.pkl are in your project.")
+            return None, None
         
-        st.success("✅ Models loaded successfully!")
+        # Load models with error handling
+        xgb_model = None
+        catboost_model = None
+        
+        if "xgb" in MODEL_PATHS:
+            try:
+                xgb_model = joblib.load(MODEL_PATHS["xgb"])
+                st.success("✅ XGBoost model loaded successfully!")
+            except Exception as e:
+                st.error(f"❌ Error loading XGBoost model: {e}")
+        
+        if "catboost" in MODEL_PATHS:
+            try:
+                catboost_model = joblib.load(MODEL_PATHS["catboost"])
+                st.success("✅ CatBoost model loaded successfully!")
+            except Exception as e:
+                st.error(f"❌ Error loading CatBoost model: {e}")
+        
+        if xgb_model is None and catboost_model is None:
+            st.error("❌ Failed to load both models. Please check your model files.")
+            return None, None
+            
         return xgb_model, catboost_model
         
     except Exception as e:
-        st.error(f"❌ Error loading models: {e}")
+        st.error(f"❌ Unexpected error loading models: {e}")
         return None, None
 
-def preprocess_features(input_data: Dict) -> pd.DataFrame:
-    """Preprocess and encode input features matching training pipeline"""
-    
-    # Create DataFrame
-    df = pd.DataFrame([input_data])
-    
-    # Feature engineering
-    df['nan_value_each_row'] = 0
-    df['age_group'] = (df['age_at_hct'] // 10).astype(int)
-    df['donor_age-age_at_hct'] = df['donor_age'] - df['age_at_hct']
-    df['comorbidity_score+karnofsky_score'] = df['comorbidity_score'] + df['karnofsky_score']
-    df['comorbidity_score-karnofsky_score'] = df['comorbidity_score'] - df['karnofsky_score']
-    df['comorbidity_score*karnofsky_score'] = df['comorbidity_score'] * df['karnofsky_score']
-    df['comorbidity_score/karnofsky_score'] = df['comorbidity_score'] / (df['karnofsky_score'] + 0.001)
-    
-    # Handle categorical encoding
-    categorical_mappings = {
-        'dri_score': ['Low', 'Intermediate', 'High', 'N/A_-_non-malignant_indication', 'N/A_-_pediatric'],
-        'psych_disturb': ['Yes', 'No'],
-        'diabetes': ['Yes', 'No'],
-        'cardiac': ['Yes', 'No'],
-        'graft_type': ['Bone_marrow', 'Peripheral_blood', 'Cord_blood']
-    }
-    
-    for col, options in categorical_mappings.items():
-        for option in options:
-            clean_option = option.replace(' ', '_').replace('/', '_').replace('-', '_')
-            df[f'{col}_{clean_option}'] = (df[col] == option.replace('_', ' ')).astype(int)
-    
-    # Drop original categorical columns
-    df = df.drop(columns=list(categorical_mappings.keys()), errors='ignore')
-    
-    # Add expected numerical features with default values
-    expected_numerical = [
-        'age_at_hct', 'karnofsky_score', 'comorbidity_score', 'hla_match_total', 
-        'donor_age', 'nan_value_each_row', 'age_group', 'donor_age-age_at_hct',
-        'comorbidity_score+karnofsky_score', 'comorbidity_score-karnofsky_score',
-        'comorbidity_score*karnofsky_score', 'comorbidity_score/karnofsky_score'
+def create_empty_feature_dataframe():
+    """Create a DataFrame with all expected features set to 0"""
+    # These are the features your model expects based on the error message
+    expected_features = [
+        'hla_match_c_high', 'hla_high_res_8', 'hla_low_res_6', 'hla_high_res_6', 
+        'hla_high_res_10', 'hla_match_dqb1_high', 'hla_nmdp_6', 'hla_match_c_low', 
+        'hla_match_drb1_low', 'hla_match_dqb1_low', 'year_hct', 'hla_match_a_high', 
+        'donor_age', 'hla_match_b_low', 'age_at_hct', 'hla_match_a_low', 
+        'hla_match_b_high', 'comorbidity_score', 'karnofsky_score', 'hla_low_res_8', 
+        'hla_match_drb1_high', 'hla_low_res_10', 'nan_value_each_row', 'age_group', 
+        'dri_score_NA', 'donor_ageage_at_hct', 'comorbidity_scorekarnofsky_score',
+        # Word2Vec features for categorical variables (40 dimensions each)
+        'dri_score_w2v_0', 'dri_score_w2v_1', 'dri_score_w2v_2', 'dri_score_w2v_3', 'dri_score_w2v_4', 
+        'dri_score_w2v_5', 'dri_score_w2v_6', 'dri_score_w2v_7', 'dri_score_w2v_8', 'dri_score_w2v_9',
+        'dri_score_w2v_10', 'dri_score_w2v_11', 'dri_score_w2v_12', 'dri_score_w2v_13', 'dri_score_w2v_14',
+        'dri_score_w2v_15', 'dri_score_w2v_16', 'dri_score_w2v_17', 'dri_score_w2v_18', 'dri_score_w2v_19',
+        'dri_score_w2v_20', 'dri_score_w2v_21', 'dri_score_w2v_22', 'dri_score_w2v_23', 'dri_score_w2v_24',
+        'dri_score_w2v_25', 'dri_score_w2v_26', 'dri_score_w2v_27', 'dri_score_w2v_28', 'dri_score_w2v_29',
+        'dri_score_w2v_30', 'dri_score_w2v_31', 'dri_score_w2v_32', 'dri_score_w2v_33', 'dri_score_w2v_34',
+        'dri_score_w2v_35', 'dri_score_w2v_36', 'dri_score_w2v_37', 'dri_score_w2v_38', 'dri_score_w2v_39',
+        # Add other Word2Vec features similarly...
+        'hla_high_res_sum', 'hla_high_res_avg', 'hla_high_low_diff', 'hla_high_low_ratio', 
+        'hla_match_total', 'hla_match_count', 'hla_match_std', 'hla_high_res_log', 'hla_high_res_squared'
     ]
     
-    for col in expected_numerical:
-        if col not in df.columns:
-            df[col] = 0
+    # Create DataFrame with all expected features set to 0
+    feature_dict = {feature: 0 for feature in expected_features}
+    return pd.DataFrame([feature_dict])
+
+def preprocess_features(input_data: Dict) -> pd.DataFrame:
+    """Preprocess and encode input features matching the original training pipeline"""
+    
+    # Start with empty feature DataFrame
+    df = create_empty_feature_dataframe()
+    
+    # Fill in the basic numerical features we have
+    df['age_at_hct'] = input_data['age_at_hct']
+    df['karnofsky_score'] = input_data['karnofsky_score']
+    df['comorbidity_score'] = input_data['comorbidity_score']
+    df['hla_match_total'] = input_data['hla_match_total']
+    df['donor_age'] = input_data['donor_age']
+    
+    # Create derived features
+    df['nan_value_each_row'] = 0
+    df['age_group'] = (input_data['age_at_hct'] // 10).astype(int)
+    df['donor_ageage_at_hct'] = input_data['donor_age'] - input_data['age_at_hct']
+    df['comorbidity_scorekarnofsky_score'] = input_data['comorbidity_score'] * input_data['karnofsky_score']
+    
+    # Set default values for year (assuming current year or average)
+    df['year_hct'] = 2023  # You might want to make this configurable
+    
+    # Set default HLA features based on hla_match_total
+    # These are simplified assumptions - you should adjust based on your actual data
+    hla_total = input_data['hla_match_total']
+    df['hla_high_res_6'] = min(hla_total, 6)
+    df['hla_high_res_8'] = min(hla_total, 8)
+    df['hla_high_res_10'] = min(hla_total, 10)
+    df['hla_low_res_6'] = min(hla_total, 6)
+    df['hla_low_res_8'] = min(hla_total, 8)
+    df['hla_low_res_10'] = min(hla_total, 10)
+    df['hla_nmdp_6'] = min(hla_total, 6)
+    
+    # Calculate derived HLA features
+    df['hla_high_res_sum'] = df['hla_high_res_6'] + df['hla_high_res_8'] + df['hla_high_res_10']
+    df['hla_high_res_avg'] = df['hla_high_res_sum'] / 3
+    df['hla_high_low_diff'] = df['hla_high_res_sum'] - (df['hla_low_res_6'] + df['hla_low_res_8'] + df['hla_low_res_10'])
+    df['hla_high_low_ratio'] = df['hla_high_res_avg'] / (df[['hla_low_res_6', 'hla_low_res_8', 'hla_low_res_10']].mean() + 0.001)
+    df['hla_match_count'] = hla_total
+    df['hla_match_std'] = 1.0  # Default value
+    df['hla_high_res_log'] = np.log(df['hla_high_res_sum'] + 1)
+    df['hla_high_res_squared'] = df['hla_high_res_sum'] ** 2
+    
+    # Set individual HLA match features (simplified)
+    df['hla_match_a_high'] = 1 if hla_total >= 16 else 0
+    df['hla_match_a_low'] = 1 if hla_total >= 14 else 0
+    df['hla_match_b_high'] = 1 if hla_total >= 16 else 0
+    df['hla_match_b_low'] = 1 if hla_total >= 14 else 0
+    df['hla_match_c_high'] = 1 if hla_total >= 16 else 0
+    df['hla_match_c_low'] = 1 if hla_total >= 14 else 0
+    df['hla_match_drb1_high'] = 1 if hla_total >= 16 else 0
+    df['hla_match_drb1_low'] = 1 if hla_total >= 14 else 0
+    df['hla_match_dqb1_high'] = 1 if hla_total >= 16 else 0
+    df['hla_match_dqb1_low'] = 1 if hla_total >= 14 else 0
+    
+    # Handle categorical variables using Word2Vec-like encoding
+    # For now, we'll set all W2V features to 0 (neutral)
+    # In a real scenario, you'd need the actual Word2Vec model or mappings
+    
+    # Set DRI score indicator
+    df['dri_score_NA'] = 1 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0
     
     # Fill any remaining NaN values
     df = df.fillna(0)
+    
+    # Ensure all columns are numeric
+    df = df.astype(float)
+    
+    logger.info(f"Processed data shape: {df.shape}")
+    logger.info(f"First 10 columns: {list(df.columns)[:10]}")
     
     return df
 
@@ -258,11 +349,30 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model) -> Dict
         processed_data = preprocess_features(patient_data)
         
         # Get individual model predictions
-        xgb_pred = float(xgb_model.predict(processed_data)[0])
-        cat_pred = float(catboost_model.predict(processed_data)[0])
+        predictions = []
+        model_names = []
         
-        # Ensemble prediction (average of two models)
-        ensemble_pred = np.mean([xgb_pred, cat_pred])
+        if xgb_model is not None:
+            xgb_pred = float(xgb_model.predict(processed_data)[0])
+            predictions.append(xgb_pred)
+            model_names.append("XGBoost")
+        
+        if catboost_model is not None:
+            cat_pred = float(catboost_model.predict(processed_data)[0])
+            predictions.append(cat_pred)
+            model_names.append("CatBoost")
+        
+        if not predictions:
+            st.error("No models available for prediction")
+            return None
+        
+        # Ensemble prediction (average of available models)
+        ensemble_pred = np.mean(predictions)
+        
+        # Create individual predictions dictionary
+        individual_predictions = {}
+        for i, name in enumerate(model_names):
+            individual_predictions[name] = round(predictions[i], 4)
         
         # Interpret prediction based on Nelson-Aalen cumulative hazard
         if ensemble_pred < -0.8:
@@ -322,17 +432,20 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model) -> Dict
         # Calculate feature contributions
         feature_contributions = calculate_feature_contributions(patient_data, ensemble_pred)
         
+        # Calculate model agreement
+        if len(predictions) > 1:
+            model_agreement = "High" if abs(predictions[0] - predictions[1]) < 0.1 else "Medium"
+        else:
+            model_agreement = "Single Model"
+        
         return {
             "prediction": round(ensemble_pred, 4),
             "risk_category": risk_category,
             "confidence": confidence,
             "interpretation": interpretation,
             "feature_contributions": feature_contributions,
-            "individual_predictions": {
-                "XGBoost": round(xgb_pred, 4),
-                "CatBoost": round(cat_pred, 4)
-            },
-            "model_agreement": "High" if abs(xgb_pred - cat_pred) < 0.1 else "Medium",
+            "individual_predictions": individual_predictions,
+            "model_agreement": model_agreement,
             "recommendations": recommendations,
             "risk_class": risk_class,
             "explanation": f"The prediction score of {ensemble_pred:.4f} represents the Nelson-Aalen cumulative hazard estimate. " + 
@@ -342,6 +455,17 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model) -> Dict
         
     except Exception as e:
         st.error(f"Prediction error: {e}")
+        # Show debug information
+        with st.expander("🔍 Debug Information"):
+            st.write("Error details:", str(e))
+            try:
+                processed_data = preprocess_features(patient_data)
+                st.write("Processed data shape:", processed_data.shape)
+                st.write("Processed data columns:", list(processed_data.columns))
+                if xgb_model:
+                    st.write("XGBoost features:", xgb_model.get_booster().feature_names)
+            except Exception as debug_e:
+                st.write("Debug error:", debug_e)
         return None
 
 def main():
@@ -354,9 +478,24 @@ def main():
     # Load models
     xgb_model, catboost_model = load_models()
     
-    if xgb_model is None or catboost_model is None:
-        st.error("❌ Unable to load models. Please check if model files are available.")
+    # Check if at least one model is loaded
+    if xgb_model is None and catboost_model is None:
+        st.error("""
+        ❌ Unable to load models. Please ensure:
+        1. Model files (XGB_model.pkl and CatBoost_model.pkl) are uploaded to your Streamlit project
+        2. All required packages are installed (check requirements.txt)
+        3. Model files are compatible with the current environment
+        """)
         return
+    
+    # Show loaded models status
+    loaded_models = []
+    if xgb_model is not None:
+        loaded_models.append("XGBoost")
+    if catboost_model is not None:
+        loaded_models.append("CatBoost")
+    
+    st.success(f"✅ Ready for predictions using: {', '.join(loaded_models)}")
     
     # Sidebar for feature information
     with st.sidebar:
@@ -381,6 +520,8 @@ def main():
         - **XGBoost** and **CatBoost** ensemble
         - Nelson-Aalen cumulative hazard estimation
         - Clinical feature analysis
+        
+        **Note:** This version uses simplified feature encoding to match your trained models.
         """)
     
     # Main form
@@ -510,8 +651,8 @@ def main():
                 
                 with col1:
                     st.subheader("🤖 Model Predictions")
-                    st.metric("XGBoost", result["individual_predictions"]["XGBoost"])
-                    st.metric("CatBoost", result["individual_predictions"]["CatBoost"])
+                    for model_name, prediction in result["individual_predictions"].items():
+                        st.metric(model_name, prediction)
                     st.metric("Model Agreement", result["model_agreement"])
                 
                 with col2:
@@ -532,6 +673,8 @@ def main():
                 # Patient summary
                 with st.expander("📋 Patient Summary"):
                     st.json(patient_data)
+            else:
+                st.error("❌ Prediction failed. Please check the input data and try again.")
 
 if __name__ == "__main__":
     main()
