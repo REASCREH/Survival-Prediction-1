@@ -61,13 +61,15 @@ def find_model_files():
     """Search for model files automatically"""
     search_patterns = [
         "*.pkl",
-        "models/*.pkl",
-        "XGB_model.pkl",
-        "CatBoost_model.pkl",
-        "./XGB_model.pkl", 
-        "./CatBoost_model.pkl",
-        "w2v_model.pkl",
-        "word2vec_model.pkl"
+        "models/*.pkl", 
+        "*.joblib",
+        "models/*.joblib",
+        "lgb_model.pkl",
+        "xgb_model.pkl", 
+        "catboost_model.pkl",
+        "./lgb_model.pkl",
+        "./xgb_model.pkl", 
+        "./catboost_model.pkl"
     ]
     
     found_models = {}
@@ -75,34 +77,32 @@ def find_model_files():
         files = glob.glob(pattern)
         for file in files:
             filename = file.lower()
-            if "xgb" in filename and "xgb" not in found_models:
+            if "lgb" in filename and "lgb" not in found_models:
+                found_models["lgb"] = file
+            elif "xgb" in filename and "xgb" not in found_models:
                 found_models["xgb"] = file
             elif "catboost" in filename and "catboost" not in found_models:
-                found_models["catboost"] = file
-            elif "w2v" in filename and "w2v" not in found_models:
-                found_models["w2v"] = file
-            elif "word2vec" in filename and "w2v" not in found_models:
-                found_models["w2v"] = file
-            elif "xgb" not in found_models and ("xgb" in filename or "xgboost" in filename):
-                found_models["xgb"] = file
-            elif "catboost" not in found_models and "catboost" in filename:
                 found_models["catboost"] = file
     
     return found_models
 
-# All 35 categorical columns from your training
-CATEGORICAL_COLUMNS = [
-    'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'tbi_status',
-    'arrhythmia', 'graft_type', 'vent_hist', 'renal_issue', 'pulm_severe',
-    'prim_disease_hct', 'cmv_status', 'tce_imm_match', 'rituximab',
-    'prod_type', 'cyto_score_detail', 'conditioning_intensity', 'ethnicity',
-    'obesity', 'mrd_hct', 'in_vivo_tcd', 'tce_match', 'hepatic_severe',
-    'prior_tumor', 'peptic_ulcer', 'gvhd_proph', 'rheum_issue', 'sex_match',
-    'race_group', 'hepatic_mild', 'tce_div_match', 'donor_related',
-    'melphalan_dose', 'cardiac', 'pulm_moderate'
+# Key features from your training
+KEY_FEATURES = [
+    'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'hla_match_c_high',
+    'hla_high_res_8', 'tbi_status', 'arrhythmia', 'hla_low_res_6', 'graft_type',
+    'vent_hist', 'renal_issue', 'pulm_severe', 'prim_disease_hct', 'hla_high_res_6',
+    'cmv_status', 'hla_high_res_10', 'hla_match_dqb1_high', 'tce_imm_match', 'hla_nmdp_6',
+    'hla_match_c_low', 'rituximab', 'hla_match_drb1_low', 'hla_match_dqb1_low', 'prod_type',
+    'cyto_score_detail', 'conditioning_intensity', 'ethnicity', 'year_hct', 'obesity',
+    'mrd_hct', 'in_vivo_tcd', 'tce_match', 'hla_match_a_high', 'hepatic_severe',
+    'donor_age', 'prior_tumor', 'hla_match_b_low', 'peptic_ulcer', 'age_at_hct',
+    'hla_match_a_low', 'gvhd_proph', 'rheum_issue', 'sex_match', 'hla_match_b_high',
+    'race_group', 'comorbidity_score', 'karnofsky_score', 'hepatic_mild', 'tce_div_match',
+    'donor_related', 'melphalan_dose', 'hla_low_res_8', 'cardiac', 'hla_match_drb1_high',
+    'pulm_moderate', 'hla_low_res_10'
 ]
 
-# Feature information - updated with all categorical variables
+# Feature information
 FEATURE_INFO = {
     "dri_score": {
         "description": "Disease Risk Index - categorizes patient risk based on underlying disease",
@@ -187,6 +187,20 @@ FEATURE_INFO = {
         "options": ["Yes", "No", "Unknown"],
         "importance": "Medium",
         "example": "No (no arrhythmia)"
+    },
+    "cyto_score": {
+        "description": "Cytogenetic risk score - evaluates chromosomal abnormalities",
+        "type": "categorical",
+        "options": ["Favorable", "Intermediate", "Poor", "Unknown"],
+        "importance": "High",
+        "example": "Intermediate (moderate genetic risk)"
+    },
+    "cmv_status": {
+        "description": "Cytomegalovirus status - affects infection risk post-transplant",
+        "type": "categorical", 
+        "options": ["Positive", "Negative", "Unknown"],
+        "importance": "Medium",
+        "example": "Negative (lower infection risk)"
     }
 }
 
@@ -196,8 +210,9 @@ def load_models():
     try:
         # Try to import required packages
         try:
+            import lightgbm as lgb
+            import xgboost as xgb
             import catboost
-            import xgboost
         except ImportError as e:
             st.error(f"❌ Missing required package: {e}")
             return None, None, None
@@ -206,13 +221,20 @@ def load_models():
         st.info(f"🔍 Found models: {MODEL_PATHS}")
         
         if not MODEL_PATHS:
-            st.error("❌ No model files found. Please ensure XGB_model.pkl and CatBoost_model.pkl are in your project.")
+            st.error("❌ No model files found. Please ensure model files are in your project.")
             return None, None, None
         
         # Load models with error handling
+        lgb_model = None
         xgb_model = None
         catboost_model = None
-        w2v_model = None
+        
+        if "lgb" in MODEL_PATHS:
+            try:
+                lgb_model = joblib.load(MODEL_PATHS["lgb"])
+                st.success("✅ LightGBM model loaded successfully!")
+            except Exception as e:
+                st.error(f"❌ Error loading LightGBM model: {e}")
         
         if "xgb" in MODEL_PATHS:
             try:
@@ -228,73 +250,23 @@ def load_models():
             except Exception as e:
                 st.error(f"❌ Error loading CatBoost model: {e}")
         
-        if "w2v" in MODEL_PATHS:
-            try:
-                w2v_model = joblib.load(MODEL_PATHS["w2v"])
-                st.success("✅ Word2Vec model loaded successfully!")
-            except Exception as e:
-                st.warning(f"⚠️ Word2Vec model not found or error loading: {e}")
-                st.info("Using default encoding for categorical variables")
-        
-        if xgb_model is None and catboost_model is None:
-            st.error("❌ Failed to load both models. Please check your model files.")
+        if lgb_model is None and xgb_model is None and catboost_model is None:
+            st.error("❌ Failed to load any models. Please check your model files.")
             return None, None, None
             
-        return xgb_model, catboost_model, w2v_model
+        return lgb_model, xgb_model, catboost_model
         
     except Exception as e:
         st.error(f"❌ Unexpected error loading models: {e}")
         return None, None, None
 
 def create_empty_feature_dataframe():
-    """Create a DataFrame with ALL expected features set to 0"""
-    # Basic numerical features
-    basic_features = [
-        'age_at_hct', 'karnofsky_score', 'comorbidity_score', 'hla_match_total', 
-        'donor_age', 'year_hct', 'nan_value_each_row', 'age_group',
-        'donor_ageage_at_hct', 'comorbidity_scorekarnofsky_score'
-    ]
-    
-    # HLA features
-    hla_features = [
-        'hla_match_c_high', 'hla_high_res_8', 'hla_low_res_6', 'hla_high_res_6', 
-        'hla_high_res_10', 'hla_match_dqb1_high', 'hla_nmdp_6', 'hla_match_c_low', 
-        'hla_match_drb1_low', 'hla_match_dqb1_low', 'hla_match_a_high', 
-        'hla_match_b_low', 'hla_match_a_low', 'hla_match_b_high', 'hla_low_res_8', 
-        'hla_match_drb1_high', 'hla_low_res_10'
-    ]
-    
-    # Derived HLA features
-    derived_features = [
-        'hla_high_res_sum', 'hla_high_res_avg', 'hla_high_low_diff', 'hla_high_low_ratio',
-        'hla_match_count', 'hla_match_std', 'hla_high_res_log', 'hla_high_res_squared'
-    ]
-    
-    # DRI score indicator
-    dri_features = ['dri_score_NA']
-    
-    # Word2Vec features for ALL 35 categorical variables (40 dimensions each)
-    w2v_features = []
-    for col in CATEGORICAL_COLUMNS:
-        w2v_features.extend([f"{col}_w2v_{i}" for i in range(40)])
-    
-    # Combine all features
-    expected_features = (basic_features + hla_features + derived_features + 
-                        dri_features + w2v_features)
-    
-    # Create DataFrame with all expected features set to 0
-    feature_dict = {feature: 0.0 for feature in expected_features}
+    """Create a DataFrame with ALL expected features"""
+    # Create base structure with all key features
+    feature_dict = {feature: 0.0 for feature in KEY_FEATURES}
     return pd.DataFrame([feature_dict])
 
-def get_w2v_embedding(word, model, vector_size=40):
-    """Get Word2Vec embedding for a word"""
-    if model is not None and word in model.wv:
-        return model.wv[word]
-    else:
-        # Return zeros if model not available or word not in vocabulary
-        return np.zeros(vector_size)
-
-def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
+def preprocess_features(input_data: Dict) -> pd.DataFrame:
     """Preprocess and encode input features matching the original training pipeline"""
     
     # Start with empty feature DataFrame
@@ -304,78 +276,34 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     df['age_at_hct'] = float(input_data['age_at_hct'])
     df['karnofsky_score'] = float(input_data['karnofsky_score'])
     df['comorbidity_score'] = float(input_data['comorbidity_score'])
-    df['hla_match_total'] = float(input_data['hla_match_total'])
     df['donor_age'] = float(input_data['donor_age'])
-    
-    # Create derived features
-    df['nan_value_each_row'] = 0.0
-    df['age_group'] = float(int(input_data['age_at_hct'] // 10))
-    df['donor_ageage_at_hct'] = float(input_data['donor_age'] - input_data['age_at_hct'])
-    df['comorbidity_scorekarnofsky_score'] = float(input_data['comorbidity_score'] * input_data['karnofsky_score'])
     
     # Set default values for year
     df['year_hct'] = 2023.0
     
-    # Set HLA features based on hla_match_total
-    hla_total = float(input_data['hla_match_total'])
-    
-    # Basic HLA features
-    df['hla_high_res_6'] = min(hla_total, 6.0)
-    df['hla_high_res_8'] = min(hla_total, 8.0)
-    df['hla_high_res_10'] = min(hla_total, 10.0)
-    df['hla_low_res_6'] = min(hla_total, 6.0)
-    df['hla_low_res_8'] = min(hla_total, 8.0)
-    df['hla_low_res_10'] = min(hla_total, 10.0)
-    df['hla_nmdp_6'] = min(hla_total, 6.0)
-    
-    # Individual HLA match features
-    df['hla_match_a_high'] = 1.0 if hla_total >= 16 else 0.0
-    df['hla_match_a_low'] = 1.0 if hla_total >= 14 else 0.0
-    df['hla_match_b_high'] = 1.0 if hla_total >= 16 else 0.0
-    df['hla_match_b_low'] = 1.0 if hla_total >= 14 else 0.0
-    df['hla_match_c_high'] = 1.0 if hla_total >= 16 else 0.0
-    df['hla_match_c_low'] = 1.0 if hla_total >= 14 else 0.0
-    df['hla_match_drb1_high'] = 1.0 if hla_total >= 16 else 0.0
-    df['hla_match_drb1_low'] = 1.0 if hla_total >= 14 else 0.0
-    df['hla_match_dqb1_high'] = 1.0 if hla_total >= 16 else 0.0
-    df['hla_match_dqb1_low'] = 1.0 if hla_total >= 14 else 0.0
-    
-    # Calculate derived HLA features
-    df['hla_high_res_sum'] = df['hla_high_res_6'] + df['hla_high_res_8'] + df['hla_high_res_10']
-    df['hla_high_res_avg'] = df['hla_high_res_sum'] / 3.0
-    df['hla_high_low_diff'] = df['hla_high_res_sum'] - (df['hla_low_res_6'] + df['hla_low_res_8'] + df['hla_low_res_10'])
-    
-    low_res_avg = (df['hla_low_res_6'] + df['hla_low_res_8'] + df['hla_low_res_10']) / 3.0
-    df['hla_high_low_ratio'] = df['hla_high_res_avg'] / (low_res_avg + 0.001)
-    
-    df['hla_match_count'] = hla_total
-    df['hla_match_std'] = 1.0
-    df['hla_high_res_log'] = np.log(df['hla_high_res_sum'] + 1.0)
-    df['hla_high_res_squared'] = df['hla_high_res_sum'] ** 2
-    
-    # Set DRI score indicator
-    df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
-    
-    # Handle ALL 35 categorical variables using Word2Vec encoding
-    # For variables provided by user, use their values
-    user_provided_categoricals = {
+    # Handle categorical variables - map to appropriate values
+    categorical_mappings = {
         'dri_score': input_data['dri_score'],
         'psych_disturb': input_data['psych_disturb'],
-        'diabetes': input_data['diabetes'],
+        'diabetes': input_data['diabetes'], 
         'tbi_status': input_data['tbi_status'],
         'arrhythmia': input_data['arrhythmia'],
         'graft_type': input_data['graft_type'],
-        'cardiac': input_data['cardiac']
+        'cardiac': input_data['cardiac'],
+        'cyto_score': input_data.get('cyto_score', 'Unknown'),
+        'cmv_status': input_data.get('cmv_status', 'Unknown')
     }
     
-    # For variables not provided by user, set to "Unknown" (as in training)
+    # Apply categorical mappings
+    for col, value in categorical_mappings.items():
+        df[col] = value
+    
+    # Set default values for other categorical variables
     default_categoricals = {
-        'cyto_score': "Unknown",
         'vent_hist': "Unknown", 
         'renal_issue': "Unknown",
         'pulm_severe': "Unknown",
         'prim_disease_hct': "Unknown",
-        'cmv_status': "Unknown",
         'tce_imm_match': "Unknown",
         'rituximab': "Unknown",
         'prod_type': "Unknown",
@@ -400,23 +328,47 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         'pulm_moderate': "Unknown"
     }
     
-    # Combine user provided and default categoricals
-    all_categoricals = {**default_categoricals, **user_provided_categoricals}
+    for col, value in default_categoricals.items():
+        df[col] = value
     
-    for col_name, value in all_categoricals.items():
-        # Get Word2Vec embedding
-        embedding = get_w2v_embedding(str(value), w2v_model, vector_size=40)
-        
-        # Set each dimension in the DataFrame
-        for i in range(40):
-            df[f'{col_name}_w2v_{i}'] = embedding[i]
+    # Calculate HLA features based on hla_match_total
+    hla_total = float(input_data['hla_match_total'])
     
-    # Fill any remaining NaN values and ensure all are float
+    # Basic HLA features
+    df['hla_high_res_6'] = min(hla_total, 6.0)
+    df['hla_high_res_8'] = min(hla_total, 8.0)
+    df['hla_high_res_10'] = min(hla_total, 10.0)
+    df['hla_low_res_6'] = min(hla_total, 6.0)
+    df['hla_low_res_8'] = min(hla_total, 8.0)
+    df['hla_low_res_10'] = min(hla_total, 10.0)
+    df['hla_nmdp_6'] = min(hla_total, 6.0)
+    
+    # Individual HLA match features
+    df['hla_match_a_high'] = 1.0 if hla_total >= 16 else 0.0
+    df['hla_match_a_low'] = 1.0 if hla_total >= 14 else 0.0
+    df['hla_match_b_high'] = 1.0 if hla_total >= 16 else 0.0
+    df['hla_match_b_low'] = 1.0 if hla_total >= 14 else 0.0
+    df['hla_match_c_high'] = 1.0 if hla_total >= 16 else 0.0
+    df['hla_match_c_low'] = 1.0 if hla_total >= 14 else 0.0
+    df['hla_match_drb1_high'] = 1.0 if hla_total >= 16 else 0.0
+    df['hla_match_drb1_low'] = 1.0 if hla_total >= 14 else 0.0
+    df['hla_match_dqb1_high'] = 1.0 if hla_total >= 16 else 0.0
+    df['hla_match_dqb1_low'] = 1.0 if hla_total >= 14 else 0.0
+    
+    # Fill any remaining NaN values
     df = df.fillna(0.0)
     
-    # Convert all columns to float to avoid type issues
-    for col in df.columns:
-        df[col] = df[col].astype(float)
+    # Convert numerical columns to float
+    numerical_cols = ['age_at_hct', 'karnofsky_score', 'comorbidity_score', 'donor_age', 'year_hct',
+                     'hla_high_res_6', 'hla_high_res_8', 'hla_high_res_10', 'hla_low_res_6', 
+                     'hla_low_res_8', 'hla_low_res_10', 'hla_nmdp_6', 'hla_match_a_high',
+                     'hla_match_a_low', 'hla_match_b_high', 'hla_match_b_low', 'hla_match_c_high',
+                     'hla_match_c_low', 'hla_match_drb1_high', 'hla_match_drb1_low', 
+                     'hla_match_dqb1_high', 'hla_match_dqb1_low']
+    
+    for col in numerical_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(float)
     
     logger.info(f"Processed data shape: {df.shape}")
     logger.info(f"Total features: {len(df.columns)}")
@@ -464,16 +416,21 @@ def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Di
     
     return contributions
 
-def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_model) -> Dict:
+def predict_survival_risk(patient_data: Dict, lgb_model, xgb_model, catboost_model) -> Dict:
     """Make prediction using ensemble model"""
     
     try:
         # Preprocess features
-        processed_data = preprocess_features(patient_data, w2v_model)
+        processed_data = preprocess_features(patient_data)
         
         # Get individual model predictions
         predictions = []
         model_names = []
+        
+        if lgb_model is not None:
+            lgb_pred = float(lgb_model.predict(processed_data)[0])
+            predictions.append(lgb_pred)
+            model_names.append("LightGBM")
         
         if xgb_model is not None:
             xgb_pred = float(xgb_model.predict(processed_data)[0])
@@ -481,6 +438,7 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
             model_names.append("XGBoost")
         
         if catboost_model is not None:
+            # For CatBoost, we need to handle categorical features properly
             cat_pred = float(catboost_model.predict(processed_data)[0])
             predictions.append(cat_pred)
             model_names.append("CatBoost")
@@ -557,7 +515,8 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
         
         # Calculate model agreement
         if len(predictions) > 1:
-            model_agreement = "High" if abs(predictions[0] - predictions[1]) < 0.1 else "Medium"
+            std_dev = np.std(predictions)
+            model_agreement = "High" if std_dev < 0.05 else "Medium" if std_dev < 0.1 else "Low"
         else:
             model_agreement = "Single Model"
         
@@ -582,15 +541,10 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
         with st.expander("🔍 Debug Information"):
             st.write("Error details:", str(e))
             try:
-                processed_data = preprocess_features(patient_data, w2v_model)
+                processed_data = preprocess_features(patient_data)
                 st.write("Processed data shape:", processed_data.shape)
                 st.write("Total features processed:", len(processed_data.columns))
-                
-                # Check if we have all expected features
-                if xgb_model and hasattr(xgb_model, 'get_booster'):
-                    expected_features = xgb_model.get_booster().feature_names
-                    st.write("Expected features count:", len(expected_features))
-                    st.write("Missing features:", set(expected_features) - set(processed_data.columns))
+                st.write("First few columns:", list(processed_data.columns)[:10])
             except Exception as debug_e:
                 st.write("Debug error:", debug_e)
         return None
@@ -603,26 +557,26 @@ def main():
     st.markdown("Predict survival outcomes for Hematopoietic Cell Transplantation patients using machine learning")
     
     # Load models
-    xgb_model, catboost_model, w2v_model = load_models()
+    lgb_model, xgb_model, catboost_model = load_models()
     
     # Check if at least one model is loaded
-    if xgb_model is None and catboost_model is None:
+    if lgb_model is None and xgb_model is None and catboost_model is None:
         st.error("""
         ❌ Unable to load models. Please ensure:
-        1. Model files (XGB_model.pkl and CatBoost_model.pkl) are uploaded to your Streamlit project
-        2. All required packages are installed (check requirements.txt)
+        1. Model files (lgb_model.pkl, xgb_model.pkl, catboost_model.pkl) are uploaded to your Streamlit project
+        2. All required packages are installed (lightgbm, xgboost, catboost)
         3. Model files are compatible with the current environment
         """)
         return
     
     # Show loaded models status
     loaded_models = []
+    if lgb_model is not None:
+        loaded_models.append("LightGBM")
     if xgb_model is not None:
         loaded_models.append("XGBoost")
     if catboost_model is not None:
         loaded_models.append("CatBoost")
-    if w2v_model is not None:
-        loaded_models.append("Word2Vec")
     
     st.success(f"✅ Ready for predictions using: {', '.join(loaded_models)}")
     
@@ -646,13 +600,11 @@ def main():
         st.markdown("### 🎯 About")
         st.markdown("""
         This system predicts survival outcomes using:
-        - **XGBoost** and **CatBoost** ensemble
-        - **Word2Vec** encoding for 35 categorical variables
+        - **LightGBM**, **XGBoost**, and **CatBoost** ensemble
         - Nelson-Aalen cumulative hazard estimation
         - Clinical feature analysis
         
-        **Note:** The model uses all 35 categorical variables from training.
-        Missing values are encoded as 'Unknown'.
+        Based on your training notebook with 59 clinical features.
         """)
     
     # Main form
@@ -703,6 +655,12 @@ def main():
                 step=1.0,
                 help=FEATURE_INFO["hla_match_total"]["description"]
             )
+            
+            cyto_score = st.selectbox(
+                "Cytogenetic Score",
+                options=FEATURE_INFO["cyto_score"]["options"],
+                help=FEATURE_INFO["cyto_score"]["description"]
+            )
         
         with col2:
             donor_age = st.slider(
@@ -749,6 +707,12 @@ def main():
                 options=["Yes", "No", "Unknown"],
                 help="Presence of heart rhythm disorders"
             )
+            
+            cmv_status = st.selectbox(
+                "CMV Status",
+                options=FEATURE_INFO["cmv_status"]["options"],
+                help=FEATURE_INFO["cmv_status"]["description"]
+            )
         
         # Submit button
         submitted = st.form_submit_button("🎯 Predict Survival Risk", use_container_width=True)
@@ -769,11 +733,13 @@ def main():
                 "cardiac": cardiac,
                 "graft_type": graft_type,
                 "tbi_status": tbi_status,
-                "arrhythmia": arrhythmia
+                "arrhythmia": arrhythmia,
+                "cyto_score": cyto_score,
+                "cmv_status": cmv_status
             }
             
             # Make prediction
-            result = predict_survival_risk(patient_data, xgb_model, catboost_model, w2v_model)
+            result = predict_survival_risk(patient_data, lgb_model, xgb_model, catboost_model)
             
             if result:
                 # Display results
