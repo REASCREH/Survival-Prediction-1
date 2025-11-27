@@ -28,10 +28,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling (omitted for brevity)
-
 # --------------------------------------------------------------------------------
-# GLOBAL FEATURE LISTS (FINAL CORRECTED ORDER - 27 NUMERICAL FEATURES)
+# GLOBAL FEATURE LISTS (CORRECTED ORDER - 27 NUMERICAL FEATURES)
 # --------------------------------------------------------------------------------
 
 # All 35 categorical columns from your training
@@ -47,19 +45,32 @@ CATEGORICAL_COLUMNS = [
 ]
 
 # The master feature list for ALL numerical columns (EXACTLY 27 FEATURES)
+# The order has been reorganized to pass the feature_names mismatch error.
 MASTER_NUMERICAL_FEATURES = [
-    # 1. First 22 features, exactly as seen in the error message
+    # 1. Initial 10 HLA features (as per the start of the required list)
     'hla_match_c_high', 'hla_high_res_8', 'hla_low_res_6', 'hla_high_res_6', 'hla_high_res_10', 
     'hla_match_dqb1_high', 'hla_nmdp_6', 'hla_match_c_low', 'hla_match_drb1_low', 'hla_match_dqb1_low', 
-    'year_hct', 'hla_match_a_high', 'donor_age', 'hla_match_b_low', 'age_at_hct', 
-    'hla_match_a_low', 'hla_match_b_high', 'comorbidity_score', 'karnofsky_score', 
-    'hla_low_res_8', 'hla_match_drb1_high', 'hla_low_res_10',
     
-    # 2. Last 5 derived/engineered features, exactly as seen in the error message
+    # 2. Core/Other Original Features (starting with year_hct, hla_match_a_high, donor_age)
+    'year_hct', 'hla_match_a_high', 'donor_age',
+    
+    # 3. Core Patient Scores (Grouped together)
+    'age_at_hct', 'comorbidity_score', 'karnofsky_score', 
+    
+    # 4. Remaining HLA features
+    'hla_match_b_low', 
+    'hla_match_a_low', 
+    'hla_match_b_high', 
+    'hla_low_res_8', 
+    'hla_match_drb1_high', 
+    'hla_low_res_10',
+    
+    # 5. Last 5 derived/engineered features
     'nan_value_each_row', 'age_group', 'dri_score_NA', 
     'donor_ageage_at_hct', 'comorbidity_scorekarnofsky_score' 
-    # Total: 27 Features. W2V features start immediately after this list.
 ]
+# Total: 27 Features. W2V features start immediately after this list, making 1427 total features.
+
 
 # Feature information (omitted for brevity)
 FEATURE_INFO = {
@@ -212,25 +223,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     donor_age = float(input_data['donor_age'])
     age_at_hct = float(input_data['age_at_hct'])
     
-    # --- Assign Numerical Features (must be one of the 27) ---
-    
-    df['age_at_hct'] = age_at_hct
-    df['karnofsky_score'] = karnofsky_score
-    df['comorbidity_score'] = comorbidity_score
-    df['donor_age'] = donor_age
-    # df['hla_match_total'] = hla_total # REMOVED: hla_match_total is NOT a final feature, only an input for other HLA calculations.
-    
-    # Set default and derived values
-    df['year_hct'] = 2019.0  
-    df['nan_value_each_row'] = 0.0
-    df['age_group'] = float(int(age_at_hct // 10))
-    df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
-    
-    # --- Assign Engineered Features (Corrected names) ---
-    df['donor_ageage_at_hct'] = donor_age - age_at_hct
-    df['comorbidity_scorekarnofsky_score'] = comorbidity_score + karnofsky_score
-    
-    # --- Calculate HLA features based on hla_match_total (All features assigned below MUST be in the 27 list) ---
+    # --- Calculate HLA features based on hla_match_total (17 features assigned) ---
     
     # Existing HLA calculation logic:
     df['hla_high_res_6'] = min(hla_total, 6.0)
@@ -260,7 +253,24 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     df['hla_match_drb1_low'] = 1.0 if hla_total >= 14 else 0.0
     df['hla_match_dqb1_high'] = 1.0 if hla_total >= 16 else 0.0
     df['hla_match_dqb1_low'] = 1.0 if hla_total >= 14 else 0.0
-
+    
+    # --- Assign Core/Engineered Numerical Features (10 features assigned) ---
+    
+    df['age_at_hct'] = age_at_hct
+    df['karnofsky_score'] = karnofsky_score
+    df['comorbidity_score'] = comorbidity_score
+    df['donor_age'] = donor_age
+    
+    # Set default and derived values
+    df['year_hct'] = 2019.0  
+    df['nan_value_each_row'] = 0.0
+    df['age_group'] = float(int(age_at_hct // 10))
+    df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
+    
+    # --- Assign Engineered Features ---
+    df['donor_ageage_at_hct'] = donor_age - age_at_hct
+    df['comorbidity_scorekarnofsky_score'] = comorbidity_score + karnofsky_score
+    
     # --- Assign Word2Vec Features ---
     user_provided_categoricals = {
         'dri_score': input_data['dri_score'], 'psych_disturb': input_data['psych_disturb'],
@@ -270,6 +280,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         'cmv_status': input_data.get('cmv_status', 'Unknown')
     }
     
+    # Use 'Unknown' as default for missing/unprovided categorical features
     default_categoricals = {
         'vent_hist': "Unknown", 'renal_issue': "Unknown", 'pulm_severe': "Unknown",
         'prim_disease_hct': "Unknown", 'tce_imm_match': "Unknown", 'rituximab': "Unknown",
@@ -297,7 +308,9 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     logger.info(f"Processed data shape: {df.shape}")
     logger.info(f"Total features: {len(df.columns)}")
     
-    return df
+    # CRITICAL: Re-enforce the final expected feature order before prediction
+    expected_features = MASTER_NUMERICAL_FEATURES + [f"{col}_w2v_{i}" for col in CATEGORICAL_COLUMNS for i in range(40)]
+    return df[expected_features]
 
 # --------------------------------------------------------------------------------
 # PREDICTION AND UTILITY FUNCTIONS (standard code below)
@@ -326,8 +339,6 @@ def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Di
     contributions["hla_matching"] = hla_contribution
     
     contributions["engineered_features"] = 0.1 * abs(prediction)
-    
-    contributions["other_factors"] = max(0, abs(prediction) - sum(contributions.values()))
     
     total = sum(contributions.values())
     if total > 0:
@@ -414,6 +425,7 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
         with st.expander("🔍 Debug Information"):
             st.write("Error details:", str(e))
             try:
+                # Re-run preprocessing and print feature list/shape for debugging
                 processed_data = preprocess_features(patient_data, w2v_model)
                 st.write("Processed data shape:", processed_data.shape)
                 st.write("Total features processed:", len(processed_data.columns))
