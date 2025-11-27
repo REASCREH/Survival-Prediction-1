@@ -60,11 +60,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------------
-# GLOBAL FEATURE LISTS (LITERAL ORDER FROM ERROR MESSAGE)
+# GLOBAL FEATURE LISTS (LITERAL ORDER FROM ERROR MESSAGE + SORTED CATEGORICALS)
 # --------------------------------------------------------------------------------
 
-# All 35 categorical columns from your training
-CATEGORICAL_COLUMNS = [
+# All 35 categorical columns from your training - NOW SORTED ALPHABETICALLY TO ENSURE W2V ORDER
+CATEGORICAL_COLUMNS = sorted([
     'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'tbi_status',
     'arrhythmia', 'graft_type', 'vent_hist', 'renal_issue', 'pulm_severe',
     'prim_disease_hct', 'cmv_status', 'tce_imm_match', 'rituximab',
@@ -73,7 +73,7 @@ CATEGORICAL_COLUMNS = [
     'prior_tumor', 'peptic_ulcer', 'gvhd_proph', 'rheum_issue', 'sex_match',
     'race_group', 'hepatic_mild', 'tce_div_match', 'donor_related',
     'melphalan_dose', 'cardiac', 'pulm_moderate'
-]
+])
 
 # THE MASTER NUMERICAL FEATURE LIST - COPIED EXACTLY FROM YOUR ERROR TRACE (27 FEATURES)
 MASTER_NUMERICAL_FEATURES = [
@@ -205,6 +205,7 @@ def get_w2v_embedding(word, model, vector_size=40):
 
     wv = model.wv if hasattr(model, 'wv') else model 
     
+    # Ensure compatibility with different gensim versions/model formats
     if hasattr(wv, 'key_to_index') and word in wv.key_to_index:
         return wv[word]
     elif word in wv: 
@@ -216,6 +217,7 @@ def create_empty_feature_dataframe():
     """Create a DataFrame with ALL expected features in the EXACT required order (27 Numerical + 1400 W2V)."""
     
     w2v_features = []
+    # CRITICAL: Build W2V features based on the sorted list
     for col in CATEGORICAL_COLUMNS:
         w2v_features.extend([f"{col}_w2v_{i}" for i in range(40)])
     
@@ -241,7 +243,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     
     # --- Assign Core/Engineered Numerical Features ---
     # NOTE: The columns are assigned by name; the correct ordering is handled by 
-    # the explicit column list when creating the dataframe.
+    # the explicit column list when creating the dataframe (create_empty_feature_dataframe).
     
     df['age_at_hct'] = age_at_hct
     df['karnofsky_score'] = karnofsky_score
@@ -252,6 +254,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     df['year_hct'] = 2019.0  
     df['nan_value_each_row'] = 0.0
     df['age_group'] = float(int(age_at_hct // 10))
+    # Correctly handle 'dri_score_NA' flag
     df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
     
     # --- Assign Engineered Features ---
@@ -298,7 +301,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         'cmv_status': input_data.get('cmv_status', 'Unknown')
     }
     
-    # Use 'Unknown' as default for missing/unprovided categorical features
+    # Use 'Unknown' as default for missing/unprovided categorical features (using the sorted list order)
     default_categoricals = {
         'vent_hist': "Unknown", 'renal_issue': "Unknown", 'pulm_severe': "Unknown",
         'prim_disease_hct': "Unknown", 'tce_imm_match': "Unknown", 'rituximab': "Unknown",
@@ -311,9 +314,12 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         'melphalan_dose': "Unknown", 'pulm_moderate': "Unknown"
     }
     
+    # Merge, prioritizing user input
     all_categoricals = {**default_categoricals, **user_provided_categoricals}
     
-    for col_name, value in all_categoricals.items():
+    # Assign Word2Vec embeddings based on the sorted CATEGORICAL_COLUMNS list
+    for col_name in CATEGORICAL_COLUMNS:
+        value = all_categoricals.get(col_name, "Unknown")
         embedding = get_w2v_embedding(str(value), w2v_model, vector_size=40)
         for i in range(40):
             df[f'{col_name}_w2v_{i}'] = embedding[i]
@@ -448,7 +454,7 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
                 st.write("Processed data shape:", processed_data.shape)
                 st.write("Total features processed:", len(processed_data.columns))
                 st.write("First 40 columns (Expected Order):", list(processed_data.columns)[:40])
-                st.warning("If the prediction error persists after this fix, it means the model file itself (XGBoost/CatBoost) was trained with a slightly different feature set or order than what it is reporting in the error, which is highly unusual.")
+                st.warning("If the prediction error persists after this fix, there is an underlying issue with the Word2Vec model loading/generation or the categorical feature order in the training pipeline.")
             except Exception as debug_e:
                 st.write("Debug error during reprocessing:", debug_e)
         return None
