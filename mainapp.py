@@ -28,8 +28,39 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2.5rem;
+        color: #1f77b4;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .prediction-card {
+        background-color: #f0f2f6;
+        padding: 1.5rem;
+        border-radius: 10px;
+        border-left: 5px solid #1f77b4;
+        margin: 1rem 0;
+    }
+    .risk-low {
+        background-color: #d4edda;
+        border-left: 5px solid #28a745;
+    }
+    .risk-moderate {
+        background-color: #fff3cd;
+        border-left: 5px solid #ffc107;
+    }
+    .risk-high {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --------------------------------------------------------------------------------
-# GLOBAL FEATURE LISTS (CORRECTED ORDER - 27 NUMERICAL FEATURES)
+# GLOBAL FEATURE LISTS (LITERAL ORDER FROM ERROR MESSAGE)
 # --------------------------------------------------------------------------------
 
 # All 35 categorical columns from your training
@@ -44,33 +75,18 @@ CATEGORICAL_COLUMNS = [
     'melphalan_dose', 'cardiac', 'pulm_moderate'
 ]
 
-# The master feature list for ALL numerical columns (EXACTLY 27 FEATURES)
-# The order has been reorganized to pass the feature_names mismatch error.
+# THE MASTER NUMERICAL FEATURE LIST - COPIED EXACTLY FROM YOUR ERROR TRACE (27 FEATURES)
 MASTER_NUMERICAL_FEATURES = [
-    # 1. Initial 10 HLA features (as per the start of the required list)
     'hla_match_c_high', 'hla_high_res_8', 'hla_low_res_6', 'hla_high_res_6', 'hla_high_res_10', 
     'hla_match_dqb1_high', 'hla_nmdp_6', 'hla_match_c_low', 'hla_match_drb1_low', 'hla_match_dqb1_low', 
-    
-    # 2. Core/Other Original Features (starting with year_hct, hla_match_a_high, donor_age)
-    'year_hct', 'hla_match_a_high', 'donor_age',
-    
-    # 3. Core Patient Scores (Grouped together)
-    'age_at_hct', 'comorbidity_score', 'karnofsky_score', 
-    
-    # 4. Remaining HLA features
-    'hla_match_b_low', 
-    'hla_match_a_low', 
-    'hla_match_b_high', 
-    'hla_low_res_8', 
-    'hla_match_drb1_high', 
-    'hla_low_res_10',
-    
-    # 5. Last 5 derived/engineered features
+    'year_hct', 'hla_match_a_high', 'donor_age', 
+    'hla_match_b_low', 'age_at_hct', 'hla_match_a_low', 'hla_match_b_high', 
+    'comorbidity_score', 'karnofsky_score', 
+    'hla_low_res_8', 'hla_match_drb1_high', 'hla_low_res_10', 
     'nan_value_each_row', 'age_group', 'dri_score_NA', 
     'donor_ageage_at_hct', 'comorbidity_scorekarnofsky_score' 
+    # Total: 27 Features. W2V features follow immediately.
 ]
-# Total: 27 Features. W2V features start immediately after this list, making 1427 total features.
-
 
 # Feature information (omitted for brevity)
 FEATURE_INFO = {
@@ -223,7 +239,26 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     donor_age = float(input_data['donor_age'])
     age_at_hct = float(input_data['age_at_hct'])
     
-    # --- Calculate HLA features based on hla_match_total (17 features assigned) ---
+    # --- Assign Core/Engineered Numerical Features ---
+    # NOTE: The columns are assigned by name; the correct ordering is handled by 
+    # the explicit column list when creating the dataframe.
+    
+    df['age_at_hct'] = age_at_hct
+    df['karnofsky_score'] = karnofsky_score
+    df['comorbidity_score'] = comorbidity_score
+    df['donor_age'] = donor_age
+    
+    # Set default and derived values
+    df['year_hct'] = 2019.0  
+    df['nan_value_each_row'] = 0.0
+    df['age_group'] = float(int(age_at_hct // 10))
+    df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
+    
+    # --- Assign Engineered Features ---
+    df['donor_ageage_at_hct'] = donor_age - age_at_hct
+    df['comorbidity_scorekarnofsky_score'] = comorbidity_score + karnofsky_score
+    
+    # --- Calculate HLA features based on hla_match_total ---
     
     # Existing HLA calculation logic:
     df['hla_high_res_6'] = min(hla_total, 6.0)
@@ -253,24 +288,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     df['hla_match_drb1_low'] = 1.0 if hla_total >= 14 else 0.0
     df['hla_match_dqb1_high'] = 1.0 if hla_total >= 16 else 0.0
     df['hla_match_dqb1_low'] = 1.0 if hla_total >= 14 else 0.0
-    
-    # --- Assign Core/Engineered Numerical Features (10 features assigned) ---
-    
-    df['age_at_hct'] = age_at_hct
-    df['karnofsky_score'] = karnofsky_score
-    df['comorbidity_score'] = comorbidity_score
-    df['donor_age'] = donor_age
-    
-    # Set default and derived values
-    df['year_hct'] = 2019.0  
-    df['nan_value_each_row'] = 0.0
-    df['age_group'] = float(int(age_at_hct // 10))
-    df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
-    
-    # --- Assign Engineered Features ---
-    df['donor_ageage_at_hct'] = donor_age - age_at_hct
-    df['comorbidity_scorekarnofsky_score'] = comorbidity_score + karnofsky_score
-    
+
     # --- Assign Word2Vec Features ---
     user_provided_categoricals = {
         'dri_score': input_data['dri_score'], 'psych_disturb': input_data['psych_disturb'],
@@ -430,6 +448,7 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
                 st.write("Processed data shape:", processed_data.shape)
                 st.write("Total features processed:", len(processed_data.columns))
                 st.write("First 40 columns (Expected Order):", list(processed_data.columns)[:40])
+                st.warning("If the prediction error persists after this fix, it means the model file itself (XGBoost/CatBoost) was trained with a slightly different feature set or order than what it is reporting in the error, which is highly unusual.")
             except Exception as debug_e:
                 st.write("Debug error during reprocessing:", debug_e)
         return None
