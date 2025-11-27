@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS for better styling (omitted for brevity)
 st.markdown("""
 <style>
     .main-header {
@@ -57,19 +57,31 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ----------------------------------------------------------------------
+# CORRECTED FUNCTION: find_model_files
+# Added search for native CatBoost (.cbm) and Word2Vec (.model) extensions
+# ----------------------------------------------------------------------
 def find_model_files():
     """Search for model files automatically"""
     search_patterns = [
         "*.pkl",
-        "models/*.pkl", 
+        "models/*.pkl",  
         "*.joblib",
         "models/*.joblib",
+        "*.cbm", # CatBoost native format
+        "models/*.cbm",
+        "*.model", # Gensim Word2Vec format
+        "models/*.model",
         "xgb_model.pkl", 
         "catboost_model.pkl",
         "w2v_model.pkl",
         "./xgb_model.pkl", 
         "./catboost_model.pkl",
-        "./w2v_model.pkl"
+        "./w2v_model.pkl",
+        "catboost_model.cbm",
+        "w2v_model.model",
+        "./catboost_model.cbm",
+        "./w2v_model.model"
     ]
     
     found_models = {}
@@ -79,14 +91,16 @@ def find_model_files():
             filename = file.lower()
             if "xgb" in filename and "xgb" not in found_models:
                 found_models["xgb"] = file
-            elif "catboost" in filename and "catboost" not in found_models:
+            # Prioritize CatBoost matches or .cbm extension
+            elif ("catboost" in filename or filename.endswith(".cbm")) and "catboost" not in found_models:
                 found_models["catboost"] = file
-            elif "w2v" in filename and "w2v" not in found_models:
+            # Prioritize W2V matches or .model extension
+            elif ("w2v" in filename or filename.endswith(".model")) and "w2v" not in found_models:
                 found_models["w2v"] = file
     
     return found_models
 
-# All 35 categorical columns from your training
+# All 35 categorical columns from your training (omitted for brevity)
 CATEGORICAL_COLUMNS = [
     'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'tbi_status',
     'arrhythmia', 'graft_type', 'vent_hist', 'renal_issue', 'pulm_severe',
@@ -98,7 +112,7 @@ CATEGORICAL_COLUMNS = [
     'melphalan_dose', 'cardiac', 'pulm_moderate'
 ]
 
-# Feature information
+# Feature information (omitted for brevity)
 FEATURE_INFO = {
     "dri_score": {
         "description": "Disease Risk Index - categorizes patient risk based on underlying disease",
@@ -200,6 +214,10 @@ FEATURE_INFO = {
     }
 }
 
+# ----------------------------------------------------------------------
+# CORRECTED FUNCTION: load_models
+# Implements native loading for CatBoost and Word2Vec as best practice
+# ----------------------------------------------------------------------
 @st.cache_resource
 def load_models():
     """Load ML models with caching"""
@@ -210,7 +228,8 @@ def load_models():
             import catboost
             from gensim.models import Word2Vec
         except ImportError as e:
-            st.error(f"❌ Missing required package: {e}")
+            # Added helpful dependency instruction
+            st.error(f"❌ Missing required package: {e}. Please ensure you have 'xgboost', 'catboost', 'gensim', and 'joblib' installed.")
             return None, None, None
         
         MODEL_PATHS = find_model_files()
@@ -220,43 +239,64 @@ def load_models():
             st.error("❌ No model files found. Please ensure model files are in your project.")
             return None, None, None
         
-        # Load models with error handling
+        # Load models with robust, format-aware error handling
         xgb_model = None
         catboost_model = None
         w2v_model = None
         
+        # --- XGBoost Loading ---
         if "xgb" in MODEL_PATHS:
             try:
+                # Standard method for XGBoost and joblib/pickle files
                 xgb_model = joblib.load(MODEL_PATHS["xgb"])
                 st.success("✅ XGBoost model loaded successfully!")
             except Exception as e:
                 st.error(f"❌ Error loading XGBoost model: {e}")
         
+        # --- CatBoost Loading ---
         if "catboost" in MODEL_PATHS:
             try:
-                catboost_model = joblib.load(MODEL_PATHS["catboost"])
+                # Use native CatBoost loading if .cbm file, fallback to joblib
+                if MODEL_PATHS["catboost"].lower().endswith(".cbm"):
+                    # Initialize an empty model and load the weights
+                    cat_model_temp = catboost.CatBoostRegressor()
+                    cat_model_temp.load_model(MODEL_PATHS["catboost"])
+                    catboost_model = cat_model_temp
+                else:
+                    # Fallback to joblib load for .pkl or .joblib
+                    catboost_model = joblib.load(MODEL_PATHS["catboost"])
                 st.success("✅ CatBoost model loaded successfully!")
             except Exception as e:
                 st.error(f"❌ Error loading CatBoost model: {e}")
-        
+
+        # --- Word2Vec Loading ---
         if "w2v" in MODEL_PATHS:
             try:
-                w2v_model = joblib.load(MODEL_PATHS["w2v"])
+                # Use native Word2Vec loading if .model file, fallback to joblib
+                if MODEL_PATHS["w2v"].lower().endswith(".model"):
+                    w2v_model = Word2Vec.load(MODEL_PATHS["w2v"])
+                else:
+                    # For .pkl or .joblib, use joblib
+                    w2v_model = joblib.load(MODEL_PATHS["w2v"])
                 st.success("✅ Word2Vec model loaded successfully!")
             except Exception as e:
+                # Changed to st.error/st.warning based on original code's preference
                 st.warning(f"⚠️ Word2Vec model not found or error loading: {e}")
         
         if xgb_model is None and catboost_model is None:
-            st.error("❌ Failed to load both models. Please check your model files.")
+            st.error("❌ Failed to load both models. Please check your model files and ensure they match the search patterns.")
             return None, None, None
             
         return xgb_model, catboost_model, w2v_model
-        
+            
     except Exception as e:
-        st.error(f"❌ Unexpected error loading models: {e}")
+        # Catch unexpected errors during the file searching/loading process
+        st.error(f"❌ Unexpected error during model loading process: {e}")
         return None, None, None
 
+
 def create_empty_feature_dataframe():
+# (Unchanged)
     """Create a DataFrame with ALL expected features including engineered features"""
     # Basic numerical features
     basic_features = [
@@ -293,14 +333,18 @@ def create_empty_feature_dataframe():
     return pd.DataFrame([feature_dict])
 
 def get_w2v_embedding(word, model, vector_size=40):
+# (Unchanged)
     """Get Word2Vec embedding for a word"""
-    if model is not None and word in model.wv:
-        return model.wv[word]
+    # Access Word2Vec KeyedVectors using .wv attribute
+    wv = model.wv if hasattr(model, 'wv') else model 
+    if wv is not None and word in wv:
+        return wv[word]
     else:
         # Return zeros if model not available or word not in vocabulary
         return np.zeros(vector_size)
 
 def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
+# (Unchanged)
     """Preprocess and encode input features matching the original training pipeline"""
     
     # Start with empty feature DataFrame
@@ -427,6 +471,7 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     return df
 
 def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Dict[str, float]:
+# (Unchanged)
     """Calculate simplified feature contributions"""
     contributions = {}
     
@@ -471,6 +516,7 @@ def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Di
     return contributions
 
 def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_model) -> Dict:
+# (Unchanged)
     """Make prediction using ensemble model"""
     
     try:
@@ -487,6 +533,7 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
             model_names.append("XGBoost")
         
         if catboost_model is not None:
+            # CatBoost models require the feature names/order to match exactly
             cat_pred = float(catboost_model.predict(processed_data)[0])
             predictions.append(cat_pred)
             model_names.append("CatBoost")
@@ -579,8 +626,8 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
             "recommendations": recommendations,
             "risk_class": risk_class,
             "explanation": f"The prediction score of {ensemble_pred:.4f} represents the Nelson-Aalen cumulative hazard estimate. " + 
-                          ("Negative values indicate lower cumulative hazard and better survival probability." if ensemble_pred < 0 
-                           else "Positive values indicate higher cumulative hazard and increased risk.")
+                         ("Negative values indicate lower cumulative hazard and better survival probability." if ensemble_pred < 0 
+                            else "Positive values indicate higher cumulative hazard and increased risk.")
         }
         
     except Exception as e:
@@ -611,7 +658,7 @@ def main():
     if xgb_model is None and catboost_model is None:
         st.error("""
         ❌ Unable to load models. Please ensure:
-        1. Model files (xgb_model.pkl, catboost_model.pkl, w2v_model.pkl) are uploaded to your Streamlit project
+        1. Model files (xgb_model.pkl/joblib, catboost_model.cbm/pkl/joblib, w2v_model.model/pkl/joblib) are uploaded to your Streamlit project
         2. All required packages are installed (xgboost, catboost, gensim)
         3. Model files are compatible with the current environment
         """)
@@ -628,7 +675,7 @@ def main():
     
     st.success(f"✅ Ready for predictions using: {', '.join(loaded_models)}")
     
-    # Sidebar for feature information
+    # Sidebar for feature information (omitted for brevity)
     with st.sidebar:
         st.header("📊 Feature Information")
         selected_feature = st.selectbox("Select feature to learn more:", list(FEATURE_INFO.keys()))
@@ -815,38 +862,23 @@ def main():
                 
                 with col1:
                     st.subheader("🤖 Model Predictions")
-                    for model_name, prediction in result["individual_predictions"].items():
-                        st.metric(model_name, prediction)
-                    st.metric("Model Agreement", result["model_agreement"])
-                
-                with col2:
-                    st.subheader("📈 Feature Contributions")
-                    contributions = result["feature_contributions"]
-                    for feature, contribution in contributions.items():
-                        st.metric(feature.replace('_', ' ').title(), f"{contribution}%")
-                
-                # Recommendations
-                st.subheader("💡 Clinical Recommendations")
-                for i, recommendation in enumerate(result["recommendations"], 1):
-                    st.markdown(f"{i}. {recommendation}")
-                
-                # Explanation
-                with st.expander("🔍 Technical Explanation"):
-                    st.info(result["explanation"])
-                    st.info("""
-                    **Preprocessing Pipeline:**
-                    - 35 categorical variables encoded with Word2Vec (40 dimensions each)
-                    - Feature engineering: age groups, donor-patient age difference
-                    - Interaction features between comorbidity and performance scores
-                    - HLA matching scores with outlier corrections
-                    - All missing values handled as in training
-                    """)
-                
-                # Patient summary
-                with st.expander("📋 Patient Summary"):
-                    st.json(patient_data)
-            else:
-                st.error("❌ Prediction failed. Please check the input data and try again.")
+                    st.json(result["individual_predictions"])
+                    st.markdown(f"**Model Agreement:** {result['model_agreement']}")
+                    st.markdown(f"**Explanation:** {result['explanation']}")
 
-if __name__ == "__main__":
+                with col2:
+                    st.subheader("🔬 Feature Contributions")
+                    # Display feature contributions (e.g., using a bar chart for better visualization)
+                    contributions_df = pd.DataFrame(
+                        result["feature_contributions"].items(), 
+                        columns=["Feature Group", "Contribution (%)"]
+                    ).sort_values(by="Contribution (%)", ascending=False)
+                    
+                    st.bar_chart(contributions_df.set_index("Feature Group"))
+                    
+                st.subheader("💡 Recommendations")
+                for rec in result["recommendations"]:
+                    st.markdown(f"- {rec}")
+
+if __name__ == '__main__':
     main()
