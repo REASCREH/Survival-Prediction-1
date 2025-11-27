@@ -1,16 +1,16 @@
-# app.py
-import streamlit as st
-import pandas as pd
-import numpy as np
+# mainapp.py
+import os
 import glob
 import joblib
+import numpy as np
+import pandas as pd
+import streamlit as st
 import logging
-import os
-from typing import Tuple, List, Dict
+from typing import Dict, List
 
-# optional imports (we handle missing packages gracefully)
+# Optional imports (we'll handle missing packages gracefully)
 try:
-    import xgboost as xgb  # optional
+    import xgboost as xgb
 except Exception:
     xgb = None
 try:
@@ -27,176 +27,7 @@ logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="HCT Survival Prediction", page_icon="🏥", layout="wide")
 
-st.markdown("""
-<style>
-    .main-header { font-size: 2.2rem; color: #1f77b4; text-align:center; margin-bottom:1rem; }
-    .prediction-card { background-color:#f0f2f6; padding:1rem; border-radius:10px; border-left:5px solid #1f77b4; margin:1rem 0; }
-    .risk-low { background-color:#d4edda; border-left:5px solid #28a745; }
-    .risk-moderate { background-color:#fff3cd; border-left:5px solid #ffc107; }
-    .risk-high { background-color:#f8d7da; border-left:5px solid #dc3545; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Helper utilities ----------------------------------------------------------
-
-def find_model_files() -> Dict[str, str]:
-    """Search current directory for model files and return candidate paths."""
-    patterns = ["*.pkl", "*.joblib", "*.cbm", "*.model", "models/*.pkl", "models/*.joblib", "models/*.cbm", "models/*.model"]
-    found = {}
-    for pat in patterns:
-        for f in glob.glob(pat):
-            name = f.lower()
-            if "xgb" in name or (name.endswith(".model") and "word2vec" not in name and "w2v" not in name and xgb is not None):
-                found.setdefault("xgb", f)
-            if "catboost" in name or name.endswith(".cbm") or "cat" in name:
-                found.setdefault("catboost", f)
-            if "w2v" in name or "word2vec" in name:
-                found.setdefault("w2v", f)
-            # generic pick for sklearn-like
-            if name.endswith(".pkl") or name.endswith(".joblib"):
-                found.setdefault("sklearn_like", f)
-    return found
-
-@st.cache_resource
-def load_model_from_path(path: str):
-    """Load a model file using best-effort logic."""
-    try:
-        # CatBoost .cbm
-        if catboost is not None and path.lower().endswith(".cbm"):
-            model = catboost.CatBoost()
-            model.load_model(path)
-            return model
-        # XGBoost native booster stored by joblib may be an sklearn wrapper or native
-        if path.lower().endswith(".model") and xgb is not None:
-            # Try xgboost.Booster / XGBClassifier saved by xgb native save_model
-            try:
-                booster = xgb.Booster()
-                booster.load_model(path)
-                return booster
-            except Exception:
-                pass
-        # fallback joblib/pickle
-        try:
-            model = joblib.load(path)
-            return model
-        except Exception as e:
-            st.warning(f"joblib.load failed for {path}: {e}")
-            # as final fallback try CatBoost load_model on generic file
-            if catboost is not None:
-                try:
-                    cb = catboost.CatBoost()
-                    cb.load_model(path)
-                    return cb
-                except Exception:
-                    pass
-            raise
-    except Exception as e:
-        st.error(f"Failed to load model at {path}: {e}")
-        return None
-
-def get_model_feature_names(model) -> List[str]:
-    """
-    Try multiple strategies to detect the feature names the model expects, in order:
-    - XGBoost Booster feature_names
-    - XGB sklearn wrapper .feature_names_in_ or .get_booster().feature_names
-    - CatBoost: model.feature_names_ or model.get_feature_names()
-    - sklearn-like: .feature_names_in_ or .feature_names
-    - If provided as a dict-like object (custom), attempt common keys.
-    """
-    if model is None:
-        return []
-
-    # XGBoost Booster (native)
-    try:
-        if xgb is not None and isinstance(model, xgb.core.Booster):
-            fn = model.feature_names
-            if fn is not None:
-                return list(fn)
-    except Exception:
-        pass
-
-    # XGBoost sklearn wrapper
-    try:
-        if xgb is not None and hasattr(model, "get_booster"):
-            booster = model.get_booster()
-            fn = getattr(booster, "feature_names", None)
-            if fn:
-                return list(fn)
-    except Exception:
-        pass
-
-    # CatBoost
-    try:
-        # CatBoost sklearn wrapper
-        if catboost is not None and hasattr(catboost, "CatBoost") and isinstance(model, catboost.CatBoost):
-            # catboost model stores feature names in model.feature_names_ or model.get_feature_names()
-            fn = getattr(model, "feature_names_", None)
-            if fn:
-                return list(fn)
-            try:
-                fn2 = model.get_feature_names()
-                if fn2:
-                    return list(fn2)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # sklearn-like objects
-    try:
-        if hasattr(model, "feature_names_in_"):
-            fn = list(model.feature_names_in_)
-            return fn
-    except Exception:
-        pass
-
-    try:
-        if hasattr(model, "feature_names"):
-            fn = getattr(model, "feature_names")
-            if isinstance(fn, (list, tuple)):
-                return list(fn)
-    except Exception:
-        pass
-
-    # fallback: some joblib saved dict where keys are feature_names
-    try:
-        if isinstance(model, dict) and "feature_names" in model:
-            return list(model["feature_names"])
-    except Exception:
-        pass
-
-    # lastly, try to inspect model.booster or model.get_booster()
-    try:
-        booster = getattr(model, "booster_", None) or getattr(model, "booster", None)
-        if booster is not None:
-            fn = getattr(booster, "feature_names", None)
-            if fn:
-                return list(fn)
-    except Exception:
-        pass
-
-    return []
-
-def get_w2v_embedding(word: str, model, vector_size: int=40) -> np.ndarray:
-    """Return W2V embedding or zeros if missing."""
-    if model is None:
-        return np.zeros(vector_size, dtype=float)
-    try:
-        # gensim 4.x: model.wv.key_to_index
-        wv = model.wv if hasattr(model, "wv") else model
-        if hasattr(wv, "key_to_index") and str(word) in wv.key_to_index:
-            return np.array(wv[str(word)], dtype=float)
-        if str(word) in wv:
-            return np.array(wv[str(word)], dtype=float)
-    except Exception:
-        pass
-    return np.zeros(vector_size, dtype=float)
-
-# --------------------------------------------------------------------------------
-# Preprocessing that aligns to model expected features
-# --------------------------------------------------------------------------------
-
-# Known categorical list (from your notebook)
+# --- Known categorical columns (from your notebook) ---
 CATEGORICAL_COLUMNS = [
     'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'tbi_status',
     'arrhythmia', 'graft_type', 'vent_hist', 'renal_issue', 'pulm_severe',
@@ -208,44 +39,249 @@ CATEGORICAL_COLUMNS = [
     'melphalan_dose', 'cardiac', 'pulm_moderate'
 ]
 
-def build_input_dataframe(patient_input: Dict, expected_feature_names: List[str], w2v_model=None) -> pd.DataFrame:
-    """
-    Create a single-row DataFrame matching expected_feature_names precisely.
-    Fill computed features where possible, zero for missing ones.
-    """
-    # Start with zeros
-    feature_dict = {f: 0.0 for f in expected_feature_names}
+# --- Numerical / engineered features observed in your notebook (from printed outputs) ---
+# This list aggregates all the numeric/engineered names that appeared in your training pipeline.
+BASE_NUMERICAL_FEATURES = [
+    'hla_match_c_high', 'hla_high_res_8', 'hla_low_res_6', 'hla_high_res_6', 'hla_high_res_10',
+    'hla_match_dqb1_high', 'hla_nmdp_6', 'hla_match_c_low', 'hla_match_drb1_low', 'hla_match_dqb1_low',
+    'year_hct', 'hla_match_a_high', 'donor_age', 'hla_match_b_low', 'age_at_hct', 'hla_match_a_low',
+    'hla_match_b_high', 'comorbidity_score', 'karnofsky_score', 'hla_low_res_8', 'hla_match_drb1_high',
+    'hla_low_res_10', 'nan_value_each_row', 'age_group', 'dri_score_NA',
+    # engineered interaction names (from your notebook prints)
+    'donor_age-age_at_hct', 'comorbidity_score+karnofsky_score',
+    'comorbidity_score-karnofsky_score', 'comorbidity_score*karnofsky_score',
+    'comorbidity_score/karnofsky_score',
+    # Additional names that were mentioned in the notebook -> include to be safe:
+    'hla_high_res_sum', 'hla_high_res_avg', 'hla_high_low_diff', 'hla_high_low_ratio',
+    'hla_match_total', 'hla_match_count', 'hla_match_std', 'hla_high_res_log', 'hla_high_res_squared'
+]
 
-    # Basic numeric inputs provided by the app UI
-    # be defensive: convert where present
-    def safe_float(k, default=0.0):
+# Derive the full expected feature list (numerical first, then W2V feature blocks for each categorical)
+def make_expected_feature_list() -> List[str]:
+    """
+    Build the fallback expected features list to use if the loaded model does not expose feature names.
+    This reproduces the same order used during training: numeric + (for each categorical) 40 W2V dims.
+    """
+    expected = []
+    # Ensure deterministic ordering
+    expected.extend(BASE_NUMERICAL_FEATURES)
+    # Append W2V features in the exact order of CATEGORICAL_COLUMNS
+    for cat in CATEGORICAL_COLUMNS:
+        expected.extend([f"{cat}_w2v_{i}" for i in range(40)])
+    return expected
+
+FALLBACK_EXPECTED_FEATURES = make_expected_feature_list()
+
+# ------------------------------
+# Model loading utilities
+# ------------------------------
+def find_model_files() -> Dict[str, str]:
+    """
+    Look for the exact filenames you reported. Case-sensitive check to match files exactly.
+    """
+    candidates = {}
+    if os.path.exists("XGB_model.pkl"):
+        candidates["xgb"] = "XGB_model.pkl"
+    if os.path.exists("CatBoost_model.pkl"):
+        candidates["catboost"] = "CatBoost_model.pkl"
+    if os.path.exists("w2v_model.pkl"):
+        candidates["w2v"] = "w2v_model.pkl"
+    # Also look for any other pickles if present (fallback)
+    for f in glob.glob("*.pkl"):
+        lname = f.lower()
+        if "xgb" in lname and "xgb" not in candidates:
+            candidates.setdefault("xgb", f)
+        if "catboost" in lname and "catboost" not in candidates:
+            candidates.setdefault("catboost", f)
+        if "w2v" in lname and "w2v" not in candidates:
+            candidates.setdefault("w2v", f)
+    return candidates
+
+@st.cache_resource
+def load_models_from_disk():
+    """
+    Load models from disk. Return (xgb_model, catboost_model, w2v_model, model_feature_names)
+    model_feature_names is a list if we could extract it from one of the loaded models (priority: XGB -> CatBoost -> sklearn wrapper)
+    """
+    found = find_model_files()
+    st.info(f"Found model files: {found}")
+    xgb_model = None
+    cat_model = None
+    w2v_model = None
+    model_feature_names = None
+
+    # Load Word2Vec first (used for preprocessing)
+    if "w2v" in found:
         try:
-            return float(patient_input.get(k, default))
+            w2v_path = found["w2v"]
+            # Try gensim load first
+            if Word2Vec is not None and w2v_path.lower().endswith(".model"):
+                w2v_model = Word2Vec.load(w2v_path)
+            else:
+                w2v_model = joblib.load(w2v_path)
+            st.success("✅ Word2Vec loaded")
+        except Exception as e:
+            st.warning(f"Could not load w2v_model.pkl: {e}")
+
+    # Load XGBoost
+    if "xgb" in found:
+        try:
+            path = found["xgb"]
+            mdl = joblib.load(path)
+            xgb_model = mdl
+            st.success("✅ XGBoost/saved model loaded")
+        except Exception as e:
+            st.warning(f"Failed to joblib.load XGB model: {e}")
+            # Try to load as raw xgboost Booster if package available
+            if xgb is not None:
+                try:
+                    booster = xgb.Booster()
+                    booster.load_model(path)
+                    xgb_model = booster
+                    st.success("✅ XGBoost Booster loaded via xgboost.Booster()")
+                except Exception as e2:
+                    st.error(f"Could not load XGB model via Booster: {e2}")
+
+    # Load CatBoost
+    if "catboost" in found:
+        try:
+            path = found["catboost"]
+            cat_model = joblib.load(path)
+            st.success("✅ CatBoost (joblib) loaded")
+        except Exception as e:
+            # Try CatBoost native load if catboost package present
+            try:
+                if catboost is not None:
+                    cb = catboost.CatBoost()
+                    cb.load_model(path)
+                    cat_model = cb
+                    st.success("✅ CatBoost model loaded via CatBoost().load_model()")
+            except Exception as e2:
+                st.warning(f"Failed to load CatBoost model: {e2}")
+
+    # Try to extract feature names from whichever model exposes them (priority order)
+    def try_extract_feature_names(model_obj):
+        if model_obj is None:
+            return None
+        # xgboost Booster
+        try:
+            if xgb is not None and isinstance(model_obj, xgb.core.Booster):
+                fn = getattr(model_obj, "feature_names", None)
+                if fn:
+                    return list(fn)
+        except Exception:
+            pass
+        # sklearn wrapper that has get_booster
+        try:
+            if xgb is not None and hasattr(model_obj, "get_booster"):
+                booster = model_obj.get_booster()
+                fn = getattr(booster, "feature_names", None)
+                if fn:
+                    return list(fn)
+        except Exception:
+            pass
+        # CatBoost native
+        try:
+            if catboost is not None and isinstance(model_obj, catboost.CatBoost):
+                fn = getattr(model_obj, "feature_names_", None)
+                if fn:
+                    return list(fn)
+                try:
+                    fn2 = model_obj.get_feature_names()
+                    if fn2:
+                        return list(fn2)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # sklearn-like
+        try:
+            if hasattr(model_obj, "feature_names_in_"):
+                return list(getattr(model_obj, "feature_names_in_"))
+        except Exception:
+            pass
+        try:
+            if hasattr(model_obj, "feature_names"):
+                fn = getattr(model_obj, "feature_names")
+                if isinstance(fn, (list, tuple)):
+                    return list(fn)
+        except Exception:
+            pass
+        return None
+
+    # Try extraction from xgb first, then catboost, then generic
+    model_feature_names = try_extract_feature_names(xgb_model) or try_extract_feature_names(cat_model)
+
+    return xgb_model, cat_model, w2v_model, model_feature_names
+
+# ------------------------------
+# Word2Vec helper
+# ------------------------------
+def get_w2v_embedding(value: str, w2v_model, vector_size: int = 40) -> np.ndarray:
+    if w2v_model is None:
+        return np.zeros(vector_size, dtype=float)
+    try:
+        wv = w2v_model.wv if hasattr(w2v_model, "wv") else w2v_model
+        # gensim key check
+        if hasattr(wv, "key_to_index"):
+            if str(value) in wv.key_to_index:
+                return np.array(wv[str(value)], dtype=float)
+        # older gensim or fallback
+        if str(value) in wv:
+            return np.array(wv[str(value)], dtype=float)
+    except Exception:
+        pass
+    return np.zeros(vector_size, dtype=float)
+
+# ------------------------------
+# Preprocessing that mirrors your training notebook
+# ------------------------------
+def feature_engineering_single_row(input_dict: Dict, w2v_model=None, expected_features: List[str] = None) -> pd.DataFrame:
+    """
+    Build a single-row DataFrame aligned to expected_features (if provided).
+    If expected_features is None, build the fallback full vector (BASE_NUMERICAL_FEATURES + W2V for each categorical).
+    """
+    if expected_features is None or len(expected_features) == 0:
+        expected_features = FALLBACK_EXPECTED_FEATURES
+
+    # Start with zeros
+    feature_values = {f: 0.0 for f in expected_features}
+
+    # Safe getters
+    def sf(k, default=0.0):
+        v = input_dict.get(k, default)
+        try:
+            return float(v)
         except Exception:
             return default
 
-    hla_total = safe_float("hla_match_total", 0.0)
-    age_at_hct = safe_float("age_at_hct", 0.0)
-    karnofsky_score = safe_float("karnofsky_score", 0.0)
-    comorbidity_score = safe_float("comorbidity_score", 0.0)
-    donor_age = safe_float("donor_age", 0.0)
+    # Core numeric inputs commonly provided from UI
+    age_at_hct = sf("age_at_hct", 0.0)
+    donor_age = sf("donor_age", 0.0)
+    comorbidity_score = sf("comorbidity_score", 0.0)
+    karnofsky_score = sf("karnofsky_score", 0.0)
+    hla_total = sf("hla_match_total", 0.0)
 
-    # heuristic assignments for engineered features (only if model expects them)
-    assignments = {
-        "age_at_hct": age_at_hct,
-        "karnofsky_score": karnofsky_score,
-        "comorbidity_score": comorbidity_score,
-        "donor_age": donor_age,
-        "year_hct": 2019.0,
-        "nan_value_each_row": 0.0,
-        "age_group": float(int(age_at_hct // 10)) if age_at_hct is not None else 0.0,
-        "dri_score_NA": 1.0 if patient_input.get("dri_score", "").startswith("N/A") else 0.0,
-        "donor_ageage_at_hct": donor_age - age_at_hct,
-        "comorbidity_scorekarnofsky_score": comorbidity_score + karnofsky_score
+    # Basic assignments (only assign if model expects those names)
+    assign_map = {
+        'age_at_hct': age_at_hct,
+        'donor_age': donor_age,
+        'comorbidity_score': comorbidity_score,
+        'karnofsky_score': karnofsky_score,
+        'year_hct': 2019.0,
+        'nan_value_each_row': 0.0,
+        'age_group': float(int(age_at_hct // 10)) if age_at_hct is not None else 0.0,
+        'dri_score_NA': 1.0 if str(input_dict.get('dri_score','')).startswith("N/A") else 0.0,
+        # engineered interactions names (use exact symbols user used in notebook)
+        'donor_age-age_at_hct': donor_age - age_at_hct,
+        'comorbidity_score+karnofsky_score': comorbidity_score + karnofsky_score,
+        'comorbidity_score-karnofsky_score': comorbidity_score - karnofsky_score,
+        'comorbidity_score*karnofsky_score': comorbidity_score * (karnofsky_score if karnofsky_score != 0 else 0.0),
+        'comorbidity_score/karnofsky_score': (comorbidity_score / karnofsky_score) if karnofsky_score not in (0, None) else 0.0
     }
 
-    # HLA helper engineering (only set if those names are expected)
-    hla_calc = {
+    # HLA engineered features (as in your notebook)
+    hla_assign = {
         "hla_high_res_6": min(hla_total, 6.0),
         "hla_high_res_8": min(hla_total, 8.0),
         "hla_high_res_10": min(hla_total, 10.0),
@@ -253,9 +289,7 @@ def build_input_dataframe(patient_input: Dict, expected_feature_names: List[str]
         "hla_low_res_8": min(hla_total, 8.0),
         "hla_low_res_10": min(hla_total, 10.0),
         "hla_nmdp_6": min(hla_total, 6.0),
-    }
-    # Binary match features (threshold logic)
-    hla_bin = {
+        # binary thresholds
         "hla_match_a_high": 1.0 if hla_total >= 16 else 0.0,
         "hla_match_a_low": 1.0 if hla_total >= 14 else 0.0,
         "hla_match_b_high": 1.0 if hla_total >= 16 else 0.0,
@@ -266,43 +300,42 @@ def build_input_dataframe(patient_input: Dict, expected_feature_names: List[str]
         "hla_match_drb1_low": 1.0 if hla_total >= 14 else 0.0,
         "hla_match_dqb1_high": 1.0 if hla_total >= 16 else 0.0,
         "hla_match_dqb1_low": 1.0 if hla_total >= 14 else 0.0,
+        "hla_high_res_sum": hla_total,  # approximate
+        "hla_high_res_avg": (hla_total / 1.0) if hla_total else 0.0
     }
 
-    # Apply assignments only where the feature name exists in model's expected list
-    for k, v in {**assignments, **hla_calc, **hla_bin}.items():
-        if k in feature_dict:
-            feature_dict[k] = float(v)
+    # apply numeric assignments where expected
+    for k, v in {**assign_map, **hla_assign}.items():
+        if k in feature_values:
+            try:
+                feature_values[k] = float(v)
+            except Exception:
+                feature_values[k] = 0.0
 
-    # Fill W2V features only if model expects them
-    # Determine which categorical W2V columns are present in expected_feature_names
-    w2v_columns_present = [f for f in expected_feature_names if "_w2v_" in f]
-    # Map base categorical -> indices present
-    categorical_w2v_bases = {}
-    for col in w2v_columns_present:
+    # Handle W2V features: for each categorical base expected by model, compute embedding from w2v_model
+    # Determine which categorical_w2v bases are present in expected features
+    w2v_cols_present = [c for c in expected_features if "_w2v_" in c]
+    categorical_bases = {}
+    for col in w2v_cols_present:
         base = col.rsplit("_w2v_", 1)[0]
-        categorical_w2v_bases.setdefault(base, []).append(col)
+        categorical_bases.setdefault(base, []).append(col)
 
-    # For each base categorical expected, compute embedding and assign to each expected column
-    for base, cols in categorical_w2v_bases.items():
-        # if the base is in our known CATEGORICAL_COLUMNS, pick value from patient_input; else try to infer
+    # For each base categorical expected, get value from input_dict or 'Unknown'
+    for base, cols in categorical_bases.items():
+        # base name should match one of the CATEGORICAL_COLUMNS; if not, use last part before any suffix
         base_name = base
-        # patient provided value might be plain (like 'dri_score') or 'dri_score' but user input keys are simple names
-        cat_value = patient_input.get(base_name, "Unknown")
+        cat_value = input_dict.get(base_name, "Unknown")
         emb = get_w2v_embedding(str(cat_value), w2v_model, vector_size=40)
-        # assign embedding to each expected column (ex: 'dri_score_w2v_0' gets emb[0])
         for col in cols:
             try:
                 idx = int(col.rsplit("_w2v_", 1)[1])
             except Exception:
                 idx = 0
-            if idx < len(emb):
-                feature_dict[col] = float(emb[idx])
-            else:
-                feature_dict[col] = 0.0
+            feature_values[col] = float(emb[idx]) if idx < len(emb) else 0.0
 
-    # Final DataFrame
-    df = pd.DataFrame([feature_dict], columns=expected_feature_names)
-    # Ensure numeric types
+    # Final dataframe in the exact expected_features order
+    df = pd.DataFrame([feature_values], columns=expected_features)
+    # Ensure floats
     for c in df.columns:
         try:
             df[c] = df[c].astype(float)
@@ -310,209 +343,162 @@ def build_input_dataframe(patient_input: Dict, expected_feature_names: List[str]
             df[c] = 0.0
     return df
 
-# --------------------------------------------------------------------------------
-# Prediction wrappers
-# --------------------------------------------------------------------------------
-
-def ensemble_predict(processed_df: pd.DataFrame, models: Dict[str, object]) -> Tuple[float, Dict]:
-    """Perform predictions for each model present and return ensemble mean and individual preds"""
-    preds = []
-    individual = {}
+# ------------------------------
+# Prediction helpers
+# ------------------------------
+def predict_with_models(processed_df: pd.DataFrame, models: Dict[str, object]) -> Dict:
+    """
+    Run predictions on processed_df for each provided model. Return dict with individual preds and ensemble mean.
+    """
+    preds = {}
+    numerical_preds = []
     for name, model in models.items():
         if model is None:
             continue
         try:
-            # XGBoost Booster vs sklearn wrapper
+            # XGBoost Booster
             if xgb is not None and isinstance(model, xgb.core.Booster):
-                # booster expects DMatrix
                 dmat = xgb.DMatrix(processed_df, feature_names=processed_df.columns.tolist())
                 p = model.predict(dmat)
                 val = float(p[0])
-            elif xgb is not None and hasattr(model, "predict") and hasattr(model, "get_booster"):
-                # sklearn wrapper
-                val = float(model.predict(processed_df)[0])
-            elif catboost is not None and isinstance(model, catboost.CatBoost):
-                val = float(model.predict(processed_df)[0])
             else:
-                # sklearn-like
+                # For sklearn-like and catboost wrappers
                 val = float(model.predict(processed_df)[0])
-            preds.append(val)
-            individual[name] = round(val, 6)
+            preds[name] = round(val, 6)
+            numerical_preds.append(val)
         except Exception as e:
-            st.warning(f"Prediction failed for {name}: {e}")
-    if not preds:
-        return None, {}
-    ens = float(np.mean(preds))
-    return ens, individual
+            st.warning(f"Prediction with {name} failed: {e}")
+    if not numerical_preds:
+        return None
+    ensemble = float(np.mean(numerical_preds))
+    return {"ensemble": round(ensemble, 6), "individual": preds}
 
-# --------------------------------------------------------------------------------
-# Streamlit UI
-# --------------------------------------------------------------------------------
-
+# ------------------------------
+# Streamlit UI and flow
+# ------------------------------
 def main():
-    st.markdown('<h1 class="main-header">🏥 HCT Survival Prediction (Robust Loader)</h1>', unsafe_allow_html=True)
-    st.write("This app attempts to automatically align the input feature vector to the model's expected feature names/order.")
+    st.markdown("<h1 style='text-align:center;color:#1f77b4'>🏥 HCT Survival Prediction</h1>", unsafe_allow_html=True)
+    st.markdown("This app reproduces your training preprocessing and loads your saved models for inference.")
 
-    model_files = find_model_files()
-    st.info(f"Found model files: {model_files}")
+    xgb_model, cat_model, w2v_model, model_feature_names = load_models_from_disk()
 
-    # Let user choose which model file to use (if many)
-    selected = None
-    if model_files:
-        chosen_key = st.selectbox("Choose model to load", options=list(model_files.keys()))
-        selected = model_files.get(chosen_key)
+    loaded_models = {}
+    if xgb_model is not None:
+        loaded_models["XGB_model"] = xgb_model
+    if cat_model is not None:
+        loaded_models["CatBoost_model"] = cat_model
+
+    if not loaded_models:
+        st.error("No XGBoost or CatBoost models loaded. Ensure `XGB_model.pkl` and/or `CatBoost_model.pkl` are present in the app folder.")
+        st.info("Found model files on disk? Filenames are case-sensitive. Place files in the same directory as mainapp.py.")
     else:
-        st.warning("No model files found in working directory. Place model files (.pkl/.joblib/.cbm/.model) in the app folder.")
-        selected = st.text_input("Or provide path to model file manually:")
+        st.success(f"Models ready: {', '.join(loaded_models.keys())}")
 
-    load_button = st.button("🔁 Load model")
+    if w2v_model is None:
+        st.warning("Word2Vec model not loaded. W2V embeddings will be zero vectors. Place `w2v_model.pkl` or `w2v_model.model` in the app folder to enable embeddings.")
 
-    # store loaded models
-    if "loaded_models" not in st.session_state:
-        st.session_state.loaded_models = {}
-    if "w2v_model" not in st.session_state:
-        st.session_state.w2v_model = None
-    if "expected_features" not in st.session_state:
-        st.session_state.expected_features = []
+    # Show whether we could extract feature names from the model
+    if model_feature_names:
+        st.info(f"Detected {len(model_feature_names)} expected feature names from the model.")
+    else:
+        st.info(f"Model did not expose feature names. Using internal fallback list of {len(FALLBACK_EXPECTED_FEATURES)} features (numeric + W2V).")
 
-    if load_button:
-        if not selected:
-            st.error("Provide a model file path.")
-        else:
-            model_obj = load_model_from_path(selected)
-            if model_obj is None:
-                st.error("Failed to load the model.")
-            else:
-                # Determine a friendly name
-                friendly = os.path.splitext(os.path.basename(selected))[0]
-                st.session_state.loaded_models[friendly] = model_obj
-                st.success(f"Loaded model: {friendly}")
-
-                # Attempt to also find a w2v model file
-                w2v_candidates = [p for k,p in model_files.items() if k in ("w2v","word2vec") or "w2v" in p.lower()]
-                if w2v_candidates:
-                    try:
-                        w2v_path = w2v_candidates[0]
-                        from gensim.models import Word2Vec
-                        st.session_state.w2v_model = Word2Vec.load(w2v_path) if w2v_path.lower().endswith(".model") else joblib.load(w2v_path)
-                        st.info(f"Loaded Word2Vec model from: {w2v_path}")
-                    except Exception as e:
-                        st.warning(f"Could not load W2V model automatically: {e}")
-
-                # Extract expected features from the loaded model (last loaded)
-                expected = get_model_feature_names(model_obj)
-                if not expected:
-                    st.warning("Could not detect model feature names automatically. You can paste the feature names list manually (see debug section).")
-                else:
-                    st.session_state.expected_features = expected
-                    st.success(f"Detected {len(expected)} expected features from the model.")
-
-    # Sidebar help & manual override
-    with st.sidebar:
-        st.header("Deployment notes")
-        st.markdown("- Ensure the model file(s) are in app directory.") 
-        st.markdown("- If automatic feature extraction fails, paste the model's feature name list in the Debug panel.")
-        st.markdown("If you trained with a saved `X_train.columns.tolist()` file, load it here.")
-
-    # Input form
-    with st.form("input_form"):
-        st.subheader("📝 Patient Inputs (these map to model features where possible)")
+    # Input form (only core fields — rest filled with defaults/Unknown)
+    with st.form("patient_form"):
+        st.subheader("Patient inputs (core values). Other fields are filled with defaults/Unknown to match training.")
         col1, col2 = st.columns(2)
         with col1:
-            dri_score = st.selectbox("DRI Score", options=["Low","Intermediate","High","N/A - non-malignant indication","N/A - pediatric","Unknown"])
+            dri_score = st.selectbox("Disease Risk Index (DRI score)", options=["Low","Intermediate","High","N/A - non-malignant indication","N/A - pediatric","Unknown"])
             age_at_hct = st.number_input("Age at transplant", min_value=0.0, max_value=120.0, value=45.0, step=1.0)
-            karnofsky_score = st.number_input("Karnofsky score", min_value=0.0, max_value=100.0, value=80.0)
-            comorbidity_score = st.number_input("Comorbidity score", min_value=0.0, max_value=20.0, value=2.0)
-            hla_match_total = st.number_input("HLA match total", min_value=0.0, max_value=20.0, value=18.0)
+            karnofsky_score = st.number_input("Karnofsky score (0-100)", min_value=0.0, max_value=100.0, value=80.0)
+            comorbidity_score = st.number_input("Comorbidity score (0-10)", min_value=0.0, max_value=50.0, value=2.0, step=0.5)
+            hla_match_total = st.number_input("HLA match total (0-20)", min_value=0.0, max_value=40.0, value=18.0, step=1.0)
         with col2:
             donor_age = st.number_input("Donor age", min_value=0.0, max_value=120.0, value=35.0)
             psych_disturb = st.selectbox("Psych disturbance", options=["Yes","No","Unknown"])
             diabetes = st.selectbox("Diabetes", options=["Yes","No","Unknown"])
             cardiac = st.selectbox("Cardiac disease", options=["Yes","No","Unknown"])
-            graft_type = st.selectbox("Graft type", options=["Bone marrow","Peripheral blood","Cord blood","Unknown"])
-            tbi_status = st.selectbox("TBI status", options=["No TBI","TBI +- Other, >cGy","Unknown"])
-            arrhythmia = st.selectbox("Arrhythmia", options=["Yes","No","Unknown"])
-            cmv_status = st.selectbox("CMV status", options=["Positive","Negative","Unknown"])
-        submit = st.form_submit_button("🔮 Predict")
+            graft_type = st.selectbox("Graft Type", options=["Bone marrow","Peripheral blood","Cord blood","Unknown"])
+        submitted = st.form_submit_button("Predict survival risk")
 
-    if submit:
-        if not st.session_state.loaded_models:
-            st.error("No model loaded. First load a model file (top controls).")
+    if submitted:
+        # Build patient data dict (include all categorical keys expected by W2V)
+        patient_inputs = {
+            "dri_score": dri_score,
+            "age_at_hct": age_at_hct,
+            "karnofsky_score": karnofsky_score,
+            "comorbidity_score": comorbidity_score,
+            "hla_match_total": hla_match_total,
+            "donor_age": donor_age,
+            "psych_disturb": psych_disturb,
+            "diabetes": diabetes,
+            "cardiac": cardiac,
+            "graft_type": graft_type,
+        }
+        # add all categorical keys with default 'Unknown' if not provided
+        for cat in CATEGORICAL_COLUMNS:
+            if cat not in patient_inputs:
+                patient_inputs[cat] = patient_inputs.get(cat, "Unknown")
+
+        # Decide which feature list to use: model_feature_names (if available) else fallback
+        expected_features = model_feature_names if model_feature_names else FALLBACK_EXPECTED_FEATURES
+
+        # Build processed dataframe row aligned to expected features
+        processed_df = feature_engineering_single_row(patient_inputs, w2v_model=w2v_model, expected_features=expected_features)
+
+        # Debug info: show preview and zero-filled columns
+        st.subheader("⚙️ Input features preview (first 60 columns)")
+        st.dataframe(processed_df.iloc[:, :60])
+
+        zero_cols = [c for c in processed_df.columns if np.isclose(processed_df[c].abs().sum(), 0.0)]
+        if zero_cols:
+            st.warning(f"{len(zero_cols)} features are zero-filled (we could not compute them from inputs). Showing first 20 examples: {zero_cols[:20]}")
         else:
-            # Use the most recently loaded model for feature extraction and prediction
-            last_name = list(st.session_state.loaded_models.keys())[-1]
-            model = st.session_state.loaded_models[last_name]
-            expected = st.session_state.expected_features or get_model_feature_names(model)
+            st.success("No zero-only columns detected in constructed input.")
 
-            # If no expected features discovered, let user paste them manually
-            if not expected:
-                manual = st.text_area("Paste a Python list of feature names (e.g. ['f1','f2',...])")
-                try:
-                    expected = eval(manual) if manual.strip() else []
-                except Exception as e:
-                    st.error(f"Could not parse manual feature list: {e}")
-                    expected = []
+        # Run predictions
+        preds = predict_with_models(processed_df, loaded_models)
+        if preds is None:
+            st.error("Prediction failed — no model produced output. Check the model logs/warnings above.")
+        else:
+            ens = preds["ensemble"]
+            individual = preds["individual"]
 
-            patient_data = {
-                "dri_score": dri_score, "age_at_hct": age_at_hct, "karnofsky_score": karnofsky_score,
-                "comorbidity_score": comorbidity_score, "hla_match_total": hla_match_total,
-                "donor_age": donor_age, "psych_disturb": psych_disturb, "diabetes": diabetes,
-                "cardiac": cardiac, "graft_type": graft_type, "tbi_status": tbi_status,
-                "arrhythmia": arrhythmia, "cmv_status": cmv_status
-            }
-
-            processed = build_input_dataframe(patient_data, expected, w2v_model=st.session_state.w2v_model)
-
-            # Show debug summary: missing features we couldn't compute, etc.
-            st.subheader("⚙️ Debug / Feature Alignment")
-            st.markdown(f"- Model expected {len(expected)} features.")
-            st.write("Preview of constructed input (first 40 cols):")
-            st.dataframe(processed.iloc[:, :40])
-
-            # Show which expected features were left zero (helpful)
-            zero_cols = [c for c in processed.columns if processed[c].abs().sum() == 0]
-            if zero_cols:
-                st.warning(f"{len(zero_cols)} columns are zero-filled (model expects them but we didn't compute them from inputs). Example: {zero_cols[:10]}")
+            # Interpret ensemble score with same thresholds you used
+            if ens < -0.8:
+                risk_category = "Very Low Risk"; confidence = "Very High"; interpretation = "Excellent prognosis"
+                css_class = "risk-low"
+            elif ens < 0:
+                risk_category = "Low Risk"; confidence = "High"; interpretation = "Good prognosis"
+                css_class = "risk-low"
+            elif ens < 0.3:
+                risk_category = "Moderate Risk"; confidence = "Medium"; interpretation = "Moderate prognosis"
+                css_class = "risk-moderate"
             else:
-                st.success("All expected model columns have some non-zero value in the constructed input row (or no zero-only columns detected).")
+                risk_category = "High Risk"; confidence = "High"; interpretation = "Higher risk profile"
+                css_class = "risk-high"
 
-            # Predict using ensemble if multiple loaded models
-            ens, individual = ensemble_predict(processed, st.session_state.loaded_models)
-            if ens is None:
-                st.error("Prediction failed for all loaded models. See warnings above.")
+            st.markdown("---")
+            st.markdown(f"""
+            <div style="background:#f0f2f6;padding:1rem;border-radius:10px;border-left:5px solid #1f77b4">
+                <h2>Risk Category: {risk_category}</h2>
+                <h3>Prediction Score: {ens:.6f}</h3>
+                <p><strong>Confidence:</strong> {confidence}</p>
+                <p><strong>Interpretation:</strong> {interpretation}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.subheader("Model predictions (individual)")
+            st.json(individual)
+            st.markdown(f"**Ensemble mean**: {ens:.6f}")
+
+            st.subheader("Recommendations (automated heuristic)")
+            if risk_category in ("Very Low Risk", "Low Risk"):
+                st.write("- Standard monitoring protocol; routine follow-up.")
+            elif risk_category == "Moderate Risk":
+                st.write("- Enhanced monitoring and closer follow-up.")
             else:
-                # Interpretation (same logic as your previous code)
-                pred = float(ens)
-                if pred < -0.8:
-                    risk_category, confidence, interpretation, risk_class = ("Very Low Risk","Very High","Excellent prognosis","risk-low")
-                elif pred < 0:
-                    risk_category, confidence, interpretation, risk_class = ("Low Risk","High","Good prognosis","risk-low")
-                elif pred < 0.3:
-                    risk_category, confidence, interpretation, risk_class = ("Moderate Risk","Medium","Moderate prognosis","risk-moderate")
-                else:
-                    risk_category, confidence, interpretation, risk_class = ("High Risk","High","Higher risk profile","risk-high")
-
-                st.markdown("---")
-                st.markdown(f"""
-                <div class="prediction-card {risk_class}">
-                    <h2>Risk Category: {risk_category}</h2>
-                    <h3>Prediction Score: {pred:.4f}</h3>
-                    <p><strong>Confidence:</strong> {confidence}</p>
-                    <p><strong>Interpretation:</strong> {interpretation}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-                st.subheader("Model Predictions")
-                st.json(individual)
-                st.markdown(f"**Ensemble mean:** {pred:.6f}")
-
-                st.subheader("Recommendations (automated)")
-                if risk_category in ("Very Low Risk","Low Risk"):
-                    st.write("- Standard monitoring protocol; routine follow-up.")
-                elif risk_category == "Moderate Risk":
-                    st.write("- Enhanced monitoring, closer follow-up.")
-                else:
-                    st.write("- Intensive monitoring, consider additional therapies.")
+                st.write("- Intensive monitoring and consider additional supportive therapies.")
 
 if __name__ == "__main__":
     main()
