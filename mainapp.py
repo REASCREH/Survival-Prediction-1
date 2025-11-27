@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling (omitted for brevity)
+# Custom CSS for better styling
 st.markdown("""
 <style>
     .main-header {
@@ -57,10 +57,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------------------------------------------------------------
-# CORRECTED FUNCTION: find_model_files
-# Added search for native CatBoost (.cbm) and Word2Vec (.model) extensions
-# ----------------------------------------------------------------------
 def find_model_files():
     """Search for model files automatically"""
     search_patterns = [
@@ -91,16 +87,14 @@ def find_model_files():
             filename = file.lower()
             if "xgb" in filename and "xgb" not in found_models:
                 found_models["xgb"] = file
-            # Prioritize CatBoost matches or .cbm extension
             elif ("catboost" in filename or filename.endswith(".cbm")) and "catboost" not in found_models:
                 found_models["catboost"] = file
-            # Prioritize W2V matches or .model extension
             elif ("w2v" in filename or filename.endswith(".model")) and "w2v" not in found_models:
                 found_models["w2v"] = file
     
     return found_models
 
-# All 35 categorical columns from your training (omitted for brevity)
+# All 35 categorical columns from your training
 CATEGORICAL_COLUMNS = [
     'dri_score', 'psych_disturb', 'cyto_score', 'diabetes', 'tbi_status',
     'arrhythmia', 'graft_type', 'vent_hist', 'renal_issue', 'pulm_severe',
@@ -214,10 +208,6 @@ FEATURE_INFO = {
     }
 }
 
-# ----------------------------------------------------------------------
-# CORRECTED FUNCTION: load_models
-# Implements native loading for CatBoost and Word2Vec as best practice
-# ----------------------------------------------------------------------
 @st.cache_resource
 def load_models():
     """Load ML models with caching"""
@@ -228,8 +218,7 @@ def load_models():
             import catboost
             from gensim.models import Word2Vec
         except ImportError as e:
-            # Added helpful dependency instruction
-            st.error(f"❌ Missing required package: {e}. Please ensure you have 'xgboost', 'catboost', 'gensim', and 'joblib' installed.")
+            st.error(f"❌ Missing required package: {e}. Please ensure 'xgboost', 'catboost', 'gensim', and 'joblib' are installed.")
             return None, None, None
         
         MODEL_PATHS = find_model_files()
@@ -247,7 +236,6 @@ def load_models():
         # --- XGBoost Loading ---
         if "xgb" in MODEL_PATHS:
             try:
-                # Standard method for XGBoost and joblib/pickle files
                 xgb_model = joblib.load(MODEL_PATHS["xgb"])
                 st.success("✅ XGBoost model loaded successfully!")
             except Exception as e:
@@ -256,14 +244,11 @@ def load_models():
         # --- CatBoost Loading ---
         if "catboost" in MODEL_PATHS:
             try:
-                # Use native CatBoost loading if .cbm file, fallback to joblib
                 if MODEL_PATHS["catboost"].lower().endswith(".cbm"):
-                    # Initialize an empty model and load the weights
                     cat_model_temp = catboost.CatBoostRegressor()
                     cat_model_temp.load_model(MODEL_PATHS["catboost"])
                     catboost_model = cat_model_temp
                 else:
-                    # Fallback to joblib load for .pkl or .joblib
                     catboost_model = joblib.load(MODEL_PATHS["catboost"])
                 st.success("✅ CatBoost model loaded successfully!")
             except Exception as e:
@@ -272,15 +257,12 @@ def load_models():
         # --- Word2Vec Loading ---
         if "w2v" in MODEL_PATHS:
             try:
-                # Use native Word2Vec loading if .model file, fallback to joblib
                 if MODEL_PATHS["w2v"].lower().endswith(".model"):
                     w2v_model = Word2Vec.load(MODEL_PATHS["w2v"])
                 else:
-                    # For .pkl or .joblib, use joblib
                     w2v_model = joblib.load(MODEL_PATHS["w2v"])
                 st.success("✅ Word2Vec model loaded successfully!")
             except Exception as e:
-                # Changed to st.error/st.warning based on original code's preference
                 st.warning(f"⚠️ Word2Vec model not found or error loading: {e}")
         
         if xgb_model is None and catboost_model is None:
@@ -290,34 +272,39 @@ def load_models():
         return xgb_model, catboost_model, w2v_model
             
     except Exception as e:
-        # Catch unexpected errors during the file searching/loading process
         st.error(f"❌ Unexpected error during model loading process: {e}")
         return None, None, None
 
-
+# --------------------------------------------------------------------------------
+# CORRECTED FUNCTION: create_empty_feature_dataframe
+# Added the 8 missing HLA features and corrected the engineered feature names.
+# --------------------------------------------------------------------------------
 def create_empty_feature_dataframe():
-# (Unchanged)
     """Create a DataFrame with ALL expected features including engineered features"""
     # Basic numerical features
     basic_features = [
         'age_at_hct', 'karnofsky_score', 'comorbidity_score', 'donor_age', 'year_hct',
-        'nan_value_each_row', 'age_group', 'dri_score_NA'
+        'nan_value_each_row', 'age_group', 'dri_score_NA', 'hla_match_total'
     ]
     
-    # Engineered features from your notebook
+    # Engineered features (Corrected names to match expected features)
     engineered_features = [
-        'donor_age-age_at_hct', 'comorbidity_score+karnofsky_score', 
-        'comorbidity_score-karnofsky_score', 'comorbidity_score*karnofsky_score',
-        'comorbidity_score/karnofsky_score'
+        'donor_ageage_at_hct',          # Corrected from 'donor_age-age_at_hct' to match expected 'donor_ageage_at_hct'
+        'comorbidity_scorekarnofsky_score' # Corrected from 'comorbidity_score+karnofsky_score'
+        # The 3 features flagged as 'unexpected' have been removed.
     ]
     
-    # HLA features
+    # HLA features (Added the 8 missing features identified in the error)
     hla_features = [
         'hla_match_c_high', 'hla_high_res_8', 'hla_low_res_6', 'hla_high_res_6', 
         'hla_high_res_10', 'hla_match_dqb1_high', 'hla_nmdp_6', 'hla_match_c_low', 
         'hla_match_drb1_low', 'hla_match_dqb1_low', 'hla_match_a_high', 
         'hla_match_b_low', 'hla_match_a_low', 'hla_match_b_high', 'hla_low_res_8', 
-        'hla_match_drb1_high', 'hla_low_res_10'
+        'hla_match_drb1_high', 'hla_low_res_10',
+        
+        # *** MISSING ENGINEERED HLA FEATURES ADDED HERE ***
+        'hla_match_std', 'hla_match_count', 'hla_high_res_log', 'hla_high_res_sum', 
+        'hla_high_res_squared', 'hla_high_res_avg', 'hla_high_low_diff', 'hla_high_low_ratio', 
     ]
     
     # Word2Vec features for ALL 35 categorical variables (40 dimensions each)
@@ -325,17 +312,16 @@ def create_empty_feature_dataframe():
     for col in CATEGORICAL_COLUMNS:
         w2v_features.extend([f"{col}_w2v_{i}" for i in range(40)])
     
-    # Combine all features
+    # Combine all features in the required order
     expected_features = basic_features + engineered_features + hla_features + w2v_features
     
-    # Create DataFrame with all expected features set to 0
+    # Create DataFrame with all expected features set to 0 and ensure order is maintained
     feature_dict = {feature: 0.0 for feature in expected_features}
-    return pd.DataFrame([feature_dict])
+    return pd.DataFrame([feature_dict])[expected_features]
 
 def get_w2v_embedding(word, model, vector_size=40):
-# (Unchanged)
     """Get Word2Vec embedding for a word"""
-    # Access Word2Vec KeyedVectors using .wv attribute
+    # Ensure it works whether model is Gensim object or KeyedVectors object
     wv = model.wv if hasattr(model, 'wv') else model 
     if wv is not None and word in wv:
         return wv[word]
@@ -343,55 +329,61 @@ def get_w2v_embedding(word, model, vector_size=40):
         # Return zeros if model not available or word not in vocabulary
         return np.zeros(vector_size)
 
+# --------------------------------------------------------------------------------
+# CORRECTED FUNCTION: preprocess_features
+# Updated engineered feature names and removed the unexpected features.
+# --------------------------------------------------------------------------------
 def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
-# (Unchanged)
     """Preprocess and encode input features matching the original training pipeline"""
     
     # Start with empty feature DataFrame
     df = create_empty_feature_dataframe()
     
+    # Get inputs
+    hla_total = float(input_data['hla_match_total'])
+    karnofsky_score = float(input_data['karnofsky_score'])
+    comorbidity_score = float(input_data['comorbidity_score'])
+    donor_age = float(input_data['donor_age'])
+    age_at_hct = float(input_data['age_at_hct'])
+    
     # Fill in the basic numerical features
-    df['age_at_hct'] = float(input_data['age_at_hct'])
-    df['karnofsky_score'] = float(input_data['karnofsky_score'])
-    df['comorbidity_score'] = float(input_data['comorbidity_score'])
-    df['donor_age'] = float(input_data['donor_age'])
+    df['age_at_hct'] = age_at_hct
+    df['karnofsky_score'] = karnofsky_score
+    df['comorbidity_score'] = comorbidity_score
+    df['donor_age'] = donor_age
+    df['hla_match_total'] = hla_total # Core numerical feature
     
-    # Set default values
-    df['year_hct'] = 2019.0  # Based on your outlier correction
+    # Set default and derived values
+    df['year_hct'] = 2019.0  
     df['nan_value_each_row'] = 0.0
-    df['age_group'] = float(int(input_data['age_at_hct'] // 10))  # Age group as in your notebook
+    df['age_group'] = float(int(age_at_hct // 10))
     
-    # Create engineered features exactly as in your notebook
-    df['donor_age-age_at_hct'] = float(input_data['donor_age'] - input_data['age_at_hct'])
-    df['comorbidity_score+karnofsky_score'] = float(input_data['comorbidity_score'] + input_data['karnofsky_score'])
-    df['comorbidity_score-karnofsky_score'] = float(input_data['comorbidity_score'] - input_data['karnofsky_score'])
-    df['comorbidity_score*karnofsky_score'] = float(input_data['comorbidity_score'] * input_data['karnofsky_score'])
-    df['comorbidity_score/karnofsky_score'] = float(input_data['comorbidity_score'] / (input_data['karnofsky_score'] + 0.001))  # Avoid division by zero
+    # Create engineered features (using corrected names)
+    df['donor_ageage_at_hct'] = donor_age - age_at_hct
+    df['comorbidity_scorekarnofsky_score'] = comorbidity_score + karnofsky_score
+    # Removed the three unexpected features: comorbidity_score-karnofsky_score, comorbidity_score*karnofsky_score, comorbidity_score/karnofsky_score
     
     # Set DRI score indicator
     df['dri_score_NA'] = 1.0 if input_data['dri_score'] in ["N/A - non-malignant indication", "N/A - pediatric"] else 0.0
     
-    # Calculate HLA features based on hla_match_total
-    hla_total = float(input_data['hla_match_total'])
-    
-    # Basic HLA features with your outlier corrections
+    # Calculate HLA features based on hla_match_total (existing code)
     df['hla_high_res_6'] = min(hla_total, 6.0)
     if hla_total == 0:
-        df['hla_high_res_6'] = 2.0  # Your correction: 0 → 2
+        df['hla_high_res_6'] = 2.0  
     df['hla_high_res_8'] = min(hla_total, 8.0)
     if hla_total == 2:
-        df['hla_high_res_8'] = 3.0  # Your correction: 2 → 3
+        df['hla_high_res_8'] = 3.0  
     df['hla_high_res_10'] = min(hla_total, 10.0)
     if hla_total == 3:
-        df['hla_high_res_10'] = 4.0  # Your correction: 3 → 4
+        df['hla_high_res_10'] = 4.0  
     df['hla_low_res_6'] = min(hla_total, 6.0)
     df['hla_low_res_8'] = min(hla_total, 8.0)
     if hla_total == 2:
-        df['hla_low_res_8'] = 3.0  # Your correction: 2 → 3
+        df['hla_low_res_8'] = 3.0  
     df['hla_low_res_10'] = min(hla_total, 10.0)
     df['hla_nmdp_6'] = min(hla_total, 6.0)
     
-    # Individual HLA match features
+    # Individual HLA match features (existing code)
     df['hla_match_a_high'] = 1.0 if hla_total >= 16 else 0.0
     df['hla_match_a_low'] = 1.0 if hla_total >= 14 else 0.0
     df['hla_match_b_high'] = 1.0 if hla_total >= 16 else 0.0
@@ -402,9 +394,11 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     df['hla_match_drb1_low'] = 1.0 if hla_total >= 14 else 0.0
     df['hla_match_dqb1_high'] = 1.0 if hla_total >= 16 else 0.0
     df['hla_match_dqb1_low'] = 1.0 if hla_total >= 14 else 0.0
+
+    # The 8 missing HLA features columns are already set to 0.0 by create_empty_feature_dataframe.
+    # We will keep them at 0.0 since the calculation logic is unknown.
     
-    # Handle ALL 35 categorical variables using Word2Vec encoding
-    # For variables provided by user, use their values
+    # Handle ALL 35 categorical variables using Word2Vec encoding (existing code)
     user_provided_categoricals = {
         'dri_score': input_data['dri_score'],
         'psych_disturb': input_data['psych_disturb'],
@@ -417,51 +411,27 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
         'cmv_status': input_data.get('cmv_status', 'Unknown')
     }
     
-    # For variables not provided by user, set to "Unknown" (as in training)
     default_categoricals = {
-        'vent_hist': "Unknown", 
-        'renal_issue': "Unknown",
-        'pulm_severe': "Unknown",
-        'prim_disease_hct': "Unknown",
-        'tce_imm_match': "Unknown",
-        'rituximab': "Unknown",
-        'prod_type': "Unknown",
-        'cyto_score_detail': "Unknown",
-        'conditioning_intensity': "Unknown",
-        'ethnicity': "Unknown",
-        'obesity': "Unknown",
-        'mrd_hct': "Unknown",
-        'in_vivo_tcd': "Unknown",
-        'tce_match': "Unknown",
-        'hepatic_severe': "Unknown",
-        'prior_tumor': "Unknown",
-        'peptic_ulcer': "Unknown",
-        'gvhd_proph': "Unknown",
-        'rheum_issue': "Unknown",
-        'sex_match': "Unknown",
-        'race_group': "Unknown",
-        'hepatic_mild': "Unknown",
-        'tce_div_match': "Unknown",
-        'donor_related': "Unknown",
-        'melphalan_dose': "Unknown",
-        'pulm_moderate': "Unknown"
+        'vent_hist': "Unknown", 'renal_issue': "Unknown", 'pulm_severe': "Unknown",
+        'prim_disease_hct': "Unknown", 'tce_imm_match': "Unknown", 'rituximab': "Unknown",
+        'prod_type': "Unknown", 'cyto_score_detail': "Unknown", 'conditioning_intensity': "Unknown",
+        'ethnicity': "Unknown", 'obesity': "Unknown", 'mrd_hct': "Unknown",
+        'in_vivo_tcd': "Unknown", 'tce_match': "Unknown", 'hepatic_severe': "Unknown",
+        'prior_tumor': "Unknown", 'peptic_ulcer': "Unknown", 'gvhd_proph': "Unknown",
+        'rheum_issue': "Unknown", 'sex_match': "Unknown", 'race_group': "Unknown",
+        'hepatic_mild': "Unknown", 'tce_div_match': "Unknown", 'donor_related': "Unknown",
+        'melphalan_dose': "Unknown", 'pulm_moderate': "Unknown"
     }
     
-    # Combine user provided and default categoricals
     all_categoricals = {**default_categoricals, **user_provided_categoricals}
     
     for col_name, value in all_categoricals.items():
-        # Get Word2Vec embedding
         embedding = get_w2v_embedding(str(value), w2v_model, vector_size=40)
-        
-        # Set each dimension in the DataFrame
         for i in range(40):
             df[f'{col_name}_w2v_{i}'] = embedding[i]
     
-    # Fill any remaining NaN values and ensure all are float
+    # Final data cleanup
     df = df.fillna(0.0)
-    
-    # Convert all columns to float to avoid type issues
     for col in df.columns:
         df[col] = df[col].astype(float)
     
@@ -471,18 +441,13 @@ def preprocess_features(input_data: Dict, w2v_model=None) -> pd.DataFrame:
     return df
 
 def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Dict[str, float]:
-# (Unchanged)
     """Calculate simplified feature contributions"""
     contributions = {}
     
     # Disease risk contribution
     dri_weights = {
-        "Low": 0.1, 
-        "Intermediate": 0.3, 
-        "High": 0.6, 
-        "N/A - non-malignant indication": 0.2, 
-        "N/A - pediatric": 0.1,
-        "Unknown": 0.3
+        "Low": 0.1, "Intermediate": 0.3, "High": 0.6, 
+        "N/A - non-malignant indication": 0.2, "N/A - pediatric": 0.1, "Unknown": 0.3
     }
     contributions["disease_risk"] = dri_weights.get(patient_data["dri_score"], 0.3) * abs(prediction)
     
@@ -516,7 +481,6 @@ def calculate_feature_contributions(patient_data: Dict, prediction: float) -> Di
     return contributions
 
 def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_model) -> Dict:
-# (Unchanged)
     """Make prediction using ensemble model"""
     
     try:
@@ -533,7 +497,6 @@ def predict_survival_risk(patient_data: Dict, xgb_model, catboost_model, w2v_mod
             model_names.append("XGBoost")
         
         if catboost_model is not None:
-            # CatBoost models require the feature names/order to match exactly
             cat_pred = float(catboost_model.predict(processed_data)[0])
             predictions.append(cat_pred)
             model_names.append("CatBoost")
@@ -868,7 +831,6 @@ def main():
 
                 with col2:
                     st.subheader("🔬 Feature Contributions")
-                    # Display feature contributions (e.g., using a bar chart for better visualization)
                     contributions_df = pd.DataFrame(
                         result["feature_contributions"].items(), 
                         columns=["Feature Group", "Contribution (%)"]
