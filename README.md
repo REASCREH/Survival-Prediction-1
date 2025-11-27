@@ -1,11 +1,15 @@
 Predicting Survival After Donor Transplants (HCT)
+
 Project Overview
+
 This project focuses on predicting survival outcomes for patients undergoing donor hematopoietic cell transplantation (HCT). Accurate survival predictions are crucial for guiding treatment decisions and improving patient outcomes. The project emphasizes both predictive accuracy and fairness, especially across patients of diverse racial and socioeconomic backgrounds.
 
 We use synthetic data mimicking real-world patient characteristics, allowing model development without compromising privacy.
 
 Project Roadmap & Techniques
+
 1. Data Exploration (EDA)
+2. 
 Purpose: Understand the dataset, distributions, missing values, and relationships between features.
 
 Key Techniques:
@@ -16,16 +20,20 @@ Visualizations like histograms, boxplots, and correlation heatmaps
 Why: Helps identify data issues, trends, and potential predictive variables.
 
 2. Feature Engineering
+ 
 Purpose: Enhance raw data to improve model learning.
 
 Techniques Used:
 
 Handle missing values (fillna, custom replacements)
+
 Correct rare or outlier values
+
 Create new features combining clinical data (e.g., donor_age - age_at_hct, comorbidity_score * karnofsky_score)
 Why: Creates more informative features, reduces noise, and captures complex relationships between variables.
 
 3. Categorical Feature Embedding
+
 Purpose: Convert categorical variables into numerical vectors that preserve semantic relationships.
 
 Technique Used: Word2Vec embeddings on categorical columns.
@@ -33,6 +41,7 @@ Technique Used: Word2Vec embeddings on categorical columns.
 Why: Traditional one-hot encoding can result in sparse data. Embeddings provide dense vector representations that improve model learning for high-cardinality categories.
 
 4. Label Transformation
+
 Purpose: Transform survival outcomes into continuous risk scores suitable for regression models.
 
 Technique Used: Nelson-Aalen estimator to compute cumulative hazard.
@@ -49,6 +58,7 @@ Standardize feature names (remove special characters)
 Why: Ensures data consistency, avoids training errors, and allows seamless model evaluation.
 
 6. Model Selection & Training
+
 Purpose: Predict continuous risk scores from processed features.
 
 Models Used:
@@ -59,6 +69,7 @@ CatBoost – Gradient boosting that handles categorical features natively
 Why Multiple Models: Combining models often improves prediction stability and reduces overfitting.
 
 7. Model Evaluation
+ 
 Metrics Used:
 
 RMSE (Root Mean Squared Error) – Measures average prediction error
